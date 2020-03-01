@@ -1,0 +1,25 @@
+body,
+html,
+#___gatsby,
+#gatsby-focus-wrapper {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  background: #ffffff;
+}
+
+body.dark {
+  background: #0f0f0f;
+}
+
+body.transition {
+  transition: 0.7s cubic-bezier(0, 1.01, 0.37, 0.99);
+  -webkit-transition: 0.7s cubic-bezier(0, 1.01, 0.37, 0.99);
+}
+
+img {
+  margin-bottom: 0;
+  display: block;
+}
