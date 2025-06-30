@@ -1,0 +1,52 @@
+:root {
+  --vos-background: white;
+  --vos-text: white;
+  --vos-logo-width: 5vw;
+  --vos-font-size: var(--vos-logo-width);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--vos-background);
+  color: var(--vos-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+#vos-canvas-wrapper {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  position: relative;
+  --gradientColorZero: #7f9600;
+  --gradientColorOne: #1f8400;
+  --gradientColorTwo: #57ccfe;
+  --gradientColorThree: #3c3fff;
+}
+
+#vos-canvas-wrapper canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+}
+
+#overlay .content {
+  display: flex;
+  place-self: center;
+  justify-content: center;
+  align-items: center;
+  font-size: var(--vos-font-size);
+  color: white;
+  letter-spacing: calc(var(--vos-font-size) * -0.05);
+}
+
+#overlay .content #logo {
+  width: var(--vos-logo-width);
+  margin-inline-end: calc(var(--vos-logo-width) / 3);
+}
