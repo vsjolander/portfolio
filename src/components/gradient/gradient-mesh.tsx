@@ -47,7 +47,6 @@ const GradientMesh: React.FC<GradientMeshProps> = ({ width, height }) => {
     []
   )
 
-  // Create geometry with custom attributes
   const geometry = useMemo(() => {
     const xSegments = Math.ceil(width * conf.density[0])
     const ySegments = Math.ceil(height * conf.density[1])
@@ -163,7 +162,7 @@ const GradientMesh: React.FC<GradientMeshProps> = ({ width, height }) => {
     // Calculate a scale factor based on display size (smaller screens = larger freq)
     const baseFreq = 14e-5
     const baseFreqY = 28e-5
-    const scale = Math.min(1.8, Math.max(1, 1000 / width))
+    const scale = Math.min(1.8, Math.max(1, 1500 / width))
 
     return {
       u_time: { value: 0 },

@@ -52,7 +52,7 @@ const GradientCanvas: React.FC<GradientCanvasProps> = ({
           position: [
             1.2568600794819134, -3.4598678247167003, 20.504868138471284,
           ],
-          zoom: 1.3195517848851626,
+          zoom: 1.3,
         }}
         orthographic
         gl={{ antialias: true, alpha: true }}
@@ -60,6 +60,7 @@ const GradientCanvas: React.FC<GradientCanvasProps> = ({
           console.log(event.target)
         }}
       >
+        <CameraControls />
         <GradientMesh width={dimensions.width} height={dimensions.height} />
       </Canvas>
       {children}
