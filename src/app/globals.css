@@ -4,10 +4,6 @@
 
 body {
   min-height: 100dvh;
-  background: linear-gradient(
-    hsl(var(--background)) 5vh,
-    hsl(var(--background-secondary)) 100vh
-  );
 }
 
 @layer utilities {

@@ -3,9 +3,16 @@ import Logo from "@/components/icons/logo"
 
 const experience = [
   {
+    role: "Head of Digital Direction & Excellence",
+    company: "SEB",
+    period: "2025 – Ongoing",
+    description:
+      "Leading the strategic development of digital direction across channels, driving customer-centric innovation and consistency. Oversee governance and adoption of the design system across platforms, ensuring scalability and quality.",
+  },
+  {
     role: "Team Manager, Green Design System",
     company: "SEB",
-    period: "2023 – Ongoing",
+    period: "2023 – 2025",
     description:
       "Leading the design system team with responsibility for staff management, team development, and stakeholder collaboration. Driving growth and adoption by aligning business and design needs across digital channels.",
   },
@@ -93,9 +100,9 @@ const contact = [
 
 export default function Home() {
   return (
-    <div className="max-w-3xl mx-auto px-6 py-16 space-y-24">
+    <div className="max-w-3xl mx-auto px-6 py-40 space-y-24">
       <section>
-        <div className="flex justify-between items-center mb-16">
+        <div className="flex items-center mb-8 gap-6">
           <Logo />
           <nav>
             <ul className="flex items-center gap-6">
@@ -117,30 +124,16 @@ export default function Home() {
             </ul>
           </nav>
         </div>
-        <h1 className="text-4xl md:text-5xl font-semibold tracking-tight mb-4">
-          Vilhelm Sjölander
-        </h1>
-        <p className="text-xl text-muted-foreground mb-12 max-w-lg">
-          Designer & developer taking projects from idea to product.
-        </p>
-        <GradientCanvas className="rounded-xl overflow-hidden w-full aspect-[16/7]" />
-      </section>
-
-      <section id="about">
-        <p className="text-xs font-mono text-muted-foreground mb-6 tracking-widest uppercase">
-          01 About
-        </p>
         <p className="text-lg leading-relaxed max-w-2xl">
-          I love taking projects from idea to product with a focus on delivery.
-          That&apos;s why I taught myself everything from back-end development to
-          product design and user testing. I believe teams that thrive can achieve
-          greatness, and I love taking a leadership role in building such teams.
+          Vilhelm is a designer and developer who takes projects from
+          idea to launch. He has over 10 years of experience working product design, front-end
+          engineering, and team leadership. Vilhelm currently works as a manager at one of Sweden's larges banks.
         </p>
       </section>
 
       <section id="work">
         <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
-          02 Experience
+          Experience
         </p>
         <div className="space-y-10">
           {experience.map((item, i) => (
@@ -162,7 +155,7 @@ export default function Home() {
 
       <section id="projects">
         <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
-          03 Selected work
+          Selected work
         </p>
         <div className="space-y-4">
           {projects.map((project, i) => (
@@ -191,7 +184,7 @@ export default function Home() {
 
       <section id="contact">
         <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
-          04 Contact
+          Contact
         </p>
         <div className="space-y-3">
           {contact.map((item) => (
