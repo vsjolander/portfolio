@@ -34,10 +34,6 @@ const GradientMesh: React.FC<GradientMeshProps> = ({ width, height }) => {
   const timeRef = useRef(0)
 
   // Debug: Log shader content
-  useEffect(() => {
-    console.log("Vertex shader loaded:", vertexShader ? "✓" : "✗")
-    console.log("Fragment shader loaded:", fragmentShader ? "✓" : "✗")
-  }, [])
 
   const conf = useMemo(
     () => ({

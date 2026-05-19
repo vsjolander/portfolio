@@ -3,14 +3,15 @@ body {
   padding: 0;
   background-color: var(--vos-background);
   color: var(--vos-text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
 }
 
 #vos-canvas-wrapper {
   aspect-ratio: 5 / 6;
   position: relative;
-  --gradientColorZero: #7f9600;
+  --gradientColorZero: #ffb145;
   --gradientColorOne: #1f8400;
   --gradientColorTwo: #57ccfe;
   --gradientColorThree: #3c3fff;
@@ -19,7 +20,7 @@ body {
   }
 
   @media screen and (min-width: 768px) {
-    aspect-ratio: 16 / 9;
+    aspect-ratio: 20 / 9;
   }
 }
 

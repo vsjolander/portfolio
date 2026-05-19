@@ -2,7 +2,6 @@
 
 import React, { useRef, useState, useEffect } from "react"
 import { Canvas } from "@react-three/fiber"
-import { CameraControls } from "@react-three/drei"
 import GradientMesh from "./gradient-mesh"
 
 // Import CSS styles
@@ -56,11 +55,7 @@ const GradientCanvas: React.FC<GradientCanvasProps> = ({
         }}
         orthographic
         gl={{ antialias: true, alpha: true }}
-        onDrag={(event) => {
-          console.log(event.target)
-        }}
       >
-        <CameraControls />
         <GradientMesh width={dimensions.width} height={dimensions.height} />
       </Canvas>
       {children}
