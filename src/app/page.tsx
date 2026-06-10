@@ -1,5 +1,6 @@
-import GradientCanvas from "@/components/ui/gradient"
 import Logo from "@/components/icons/logo"
+import { FadeIn } from "@/components/ui/fade-in"
+import { SplitLines } from "@/components/ui/split-lines"
 
 const experience = [
   {
@@ -92,113 +93,162 @@ const projects = [
 ]
 
 const contact = [
-  { label: "Email", href: "mailto:vilhelm@sjolander.design", text: "vilhelm@sjolander.design" },
-  { label: "LinkedIn", href: "https://linkedin.com/in/vilhelmsjölander-681ab597", text: "linkedin.com/in/vilhelmsjölander" },
-  { label: "GitHub", href: "https://github.com/vsjolander", text: "github.com/vsjolander" },
-  { label: "Dribbble", href: "https://dribbble.com/vsjolander", text: "dribbble.com/vsjolander" },
+  {
+    label: "Email",
+    href: "mailto:vilhelm@sjolander.design",
+    text: "vilhelm@sjolander.design",
+  },
+  {
+    label: "LinkedIn",
+    href: "https://linkedin.com/in/vilhelmsjölander-681ab597",
+    text: "linkedin.com/in/vilhelmsjölander",
+  },
+  {
+    label: "GitHub",
+    href: "https://github.com/vsjolander",
+    text: "github.com/vsjolander",
+  },
+  {
+    label: "Dribbble",
+    href: "https://dribbble.com/vsjolander",
+    text: "dribbble.com/vsjolander",
+  },
 ]
 
 export default function Home() {
   return (
     <div className="max-w-3xl mx-auto px-6 py-40 space-y-24">
+      {/* Hero — above the fold, staggered on mount */}
       <section>
-        <div className="flex items-center mb-8 gap-6">
-          <Logo />
-          <nav>
-            <ul className="flex items-center gap-6">
-              <li>
-                <a href="#work" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                  Work
-                </a>
-              </li>
-              <li>
-                <a href="#about" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                  About
-                </a>
-              </li>
-              <li>
-                <a href="#contact" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                  Contact
-                </a>
-              </li>
-            </ul>
-          </nav>
-        </div>
-        <p className="text-lg leading-relaxed max-w-2xl">
-          Vilhelm is a designer and developer who takes projects from
-          idea to launch. He has over 10 years of experience working product design, front-end
-          engineering, and team leadership. Vilhelm currently works as a manager at one of Sweden's larges banks.
-        </p>
+        <FadeIn immediate delay={0}>
+          <div className="flex items-center mb-8 gap-6">
+            <Logo />
+            <nav>
+              <ul className="flex items-center gap-6">
+                <li>
+                  <a
+                    href="#work"
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Work
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="#about"
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    About
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="#contact"
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Contact
+                  </a>
+                </li>
+              </ul>
+            </nav>
+          </div>
+        </FadeIn>
+        <SplitLines className="text-lg leading-[1.425] max-w-2xl" delay={180}>
+          {
+            "Vilhelm is a designer and developer who takes projects from idea to launch. He has over 10 years of experience working product design, front-end engineering, and team leadership. Vilhelm currently works as a manager at one of Sweden's largest banks. Vilhelm is a designer and developer who takes projects from idea to launch. He has over 10 years of experience working product design, front-end engineering, and team leadership. Vilhelm currently works as a manager at one of Sweden's largest banks."
+          }
+        </SplitLines>
       </section>
 
+      {/* Experience — scroll-triggered, staggered by index */}
       <section id="work">
-        <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
-          Experience
-        </p>
+        <FadeIn>
+          <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
+            Experience
+          </p>
+        </FadeIn>
         <div className="space-y-10">
           {experience.map((item, i) => (
-            <div key={i} className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-1 md:gap-8">
-              <div>
-                <p className="font-medium">{item.role}</p>
-                <p className="text-sm text-muted-foreground mb-2">{item.company}</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  {item.description}
+            <FadeIn key={i} delay={i * 60}>
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-1 md:gap-8">
+                <div>
+                  <p className="font-medium">{item.role}</p>
+                  <p className="text-sm text-muted-foreground mb-2">
+                    {item.company}
+                  </p>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {item.description}
+                  </p>
+                </div>
+                <p className="text-sm text-muted-foreground whitespace-nowrap md:text-right">
+                  {item.period}
                 </p>
               </div>
-              <p className="text-sm text-muted-foreground whitespace-nowrap md:text-right">
-                {item.period}
-              </p>
-            </div>
+            </FadeIn>
           ))}
         </div>
       </section>
 
+      {/* Selected work — scroll-triggered */}
       <section id="projects">
-        <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
-          Selected work
-        </p>
+        <FadeIn>
+          <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
+            Selected work
+          </p>
+        </FadeIn>
         <div className="space-y-4">
           {projects.map((project, i) => (
-            <div key={i} className="p-6 rounded-xl bg-secondary">
-              <div className="flex justify-between items-start mb-3">
-                <h3 className="font-medium">{project.title}</h3>
-                <span className="text-sm text-muted-foreground ml-4">{project.client}</span>
-              </div>
-              <p className="text-sm text-muted-foreground leading-relaxed mb-4">
-                {project.description}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {project.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="text-xs px-2 py-1 rounded-full bg-background text-muted-foreground"
-                  >
-                    {tag}
+            <FadeIn key={i} delay={i * 80}>
+              <div className="p-6 rounded-xl bg-secondary">
+                <div className="flex justify-between items-start mb-3">
+                  <h3 className="font-medium">{project.title}</h3>
+                  <span className="text-sm text-muted-foreground ml-4">
+                    {project.client}
                   </span>
-                ))}
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed mb-4">
+                  {project.description}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {project.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="text-xs px-2 py-1 rounded-full bg-background text-muted-foreground"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
               </div>
-            </div>
+            </FadeIn>
           ))}
         </div>
       </section>
 
+      {/* Contact — scroll-triggered */}
       <section id="contact">
-        <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
-          Contact
-        </p>
+        <FadeIn>
+          <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
+            Contact
+          </p>
+        </FadeIn>
         <div className="space-y-3">
-          {contact.map((item) => (
-            <div key={item.label} className="flex items-center gap-4">
-              <span className="text-sm text-muted-foreground w-16">{item.label}</span>
-              <a
-                href={item.href}
-                target={item.href.startsWith("mailto") ? undefined : "_blank"}
-                rel="noopener noreferrer"
-                className="text-sm hover:text-foreground text-muted-foreground transition-colors"
-              >
-                {item.text}
-              </a>
-            </div>
+          {contact.map((item, i) => (
+            <FadeIn key={item.label} delay={i * 60}>
+              <div className="flex items-center gap-4">
+                <span className="text-sm text-muted-foreground w-16">
+                  {item.label}
+                </span>
+                <a
+                  href={item.href}
+                  target={item.href.startsWith("mailto") ? undefined : "_blank"}
+                  rel="noopener noreferrer"
+                  className="text-sm hover:text-foreground text-muted-foreground transition-colors"
+                >
+                  {item.text}
+                </a>
+              </div>
+            </FadeIn>
           ))}
         </div>
       </section>
