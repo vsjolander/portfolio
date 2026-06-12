@@ -16,6 +16,13 @@ interface FadeInProps {
    * When false (default), animate when scrolled into view.
    */
   immediate?: boolean
+  /**
+   * Delay to use if the element is already in view on initial load
+   * (e.g. to continue a stagger sequence from elements above it).
+   * Falls back to `delay` if not provided. Has no effect once the
+   * element is scrolled into view from below the fold.
+   */
+  initialDelay?: number
 }
 
 export function FadeIn({
@@ -23,6 +30,7 @@ export function FadeIn({
   className,
   delay = 0,
   immediate = false,
+  initialDelay,
 }: FadeInProps) {
   const ref = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
@@ -30,6 +38,17 @@ export function FadeIn({
   useEffect(() => {
     if (immediate) {
       const t = setTimeout(() => setVisible(true), delay)
+      return () => clearTimeout(t)
+    }
+
+    const el = ref.current
+    if (!el) return
+
+    const rect = el.getBoundingClientRect()
+    const inViewOnLoad = rect.top < window.innerHeight && rect.bottom > 0
+
+    if (inViewOnLoad) {
+      const t = setTimeout(() => setVisible(true), initialDelay ?? delay)
       return () => clearTimeout(t)
     }
 
@@ -43,9 +62,9 @@ export function FadeIn({
       { threshold: 0.05, rootMargin: "0px 0px -32px 0px" }
     )
 
-    if (ref.current) observer.observe(ref.current)
+    observer.observe(el)
     return () => observer.disconnect()
-  }, [immediate, delay])
+  }, [immediate, delay, initialDelay])
 
   return (
     <div

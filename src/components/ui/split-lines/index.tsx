@@ -6,13 +6,11 @@ import { SplitText } from "gsap/SplitText"
 import { CustomEase } from "gsap/CustomEase"
 
 gsap.registerPlugin(SplitText, CustomEase)
-
-CustomEase.create("cine", "0.34, 1.23, 0.64, 1")
+CustomEase.create("custom-cine", "0.34, 1.30, 0.64, 1")
 
 interface SplitLinesProps {
   children: string
   className?: string
-  /** Delay in ms before the animation starts. */
   delay?: number
 }
 
@@ -27,19 +25,31 @@ export function SplitLines({
     const el = ref.current
     if (!el) return
 
+    el.style.opacity = "0"
+
     const split = SplitText.create(el, {
       type: "lines",
       autoSplit: true,
       linesClass: "split-line",
       onSplit: (self) => {
+        self.lines.forEach((line) => {
+          line.style.setProperty("--reveal", "0%")
+          line.style.backgroundImage =
+            "radial-gradient(circle at center, hsl(var(--foreground)) var(--reveal), hsl(var(--text-gradient-1)) calc(var(--reveal) + 10%), hsl(var(--text-gradient-2)) calc(var(--reveal) + 20%), hsl(var(--text-gradient-3)) calc(var(--reveal) + 30%), hsl(var(--text-gradient-3)) calc(var(--reveal) + 40%), hsl(var(--background)) calc(var(--reveal) + 50%))"
+          line.style.setProperty("background-clip", "text")
+          line.style.setProperty("-webkit-background-clip", "text")
+          line.style.setProperty("-webkit-text-fill-color", "transparent")
+          line.style.color = "transparent"
+        })
+
         const tl = gsap.timeline({ delay: delay / 1000 })
         tl.from(
           self.lines,
           {
             opacity: 0,
-            filter: "blur(8px)",
+            filter: "blur(10px)",
             duration: 0.4,
-            ease: "cine",
+            ease: "custom-cine",
             stagger: { each: 0.03 },
           },
           0
@@ -49,11 +59,23 @@ export function SplitLines({
           {
             y: 20,
             duration: 0.6,
-            ease: "cine",
+            ease: "custom-cine",
             stagger: { each: 0.03 },
           },
           0
         )
+        tl.to(
+          self.lines,
+          {
+            "--reveal": "140%",
+            duration: 0.6,
+            stagger: { each: 0.02, ease: "ease-out" },
+          },
+          0
+        )
+
+        el.style.opacity = "1"
+
         return tl
       },
     })
@@ -62,7 +84,7 @@ export function SplitLines({
   }, [delay])
 
   return (
-    <p ref={ref} className={className}>
+    <p ref={ref} className={className} style={{ opacity: 0 }}>
       {children}
     </p>
   )
