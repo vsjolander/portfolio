@@ -38,16 +38,27 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "dialog-content fixed bottom-0 left-[50%] z-50 flex w-full max-w-lg max-h-[85vh] translate-x-[-50%] flex-col overflow-hidden bg-secondary shadow-lg rounded-t-3xl pb-4",
+        "dialog-scroll fixed inset-0 z-50 overflow-y-auto focus:outline-none",
         className
       )}
       {...props}
     >
-      <div className="grid gap-4 overflow-y-auto p-12">{children}</div>
-      <DialogPrimitive.Close className="absolute right-6 top-6 z-10 rounded-full bg-secondary p-2 opacity-70 ring-offset-background transition-all hover:opacity-100 hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
-        <Cross2Icon className="h-4 w-4" />
-        <span className="sr-only">Close</span>
-      </DialogPrimitive.Close>
+      <div className="flex min-h-full items-center justify-center p-4 sm:p-8">
+        {/* Click-away backdrop: closes the dialog when the area around the
+            panel is clicked. Sits behind the panel (which is z-10). */}
+        <DialogPrimitive.Close
+          aria-label="Close"
+          tabIndex={-1}
+          className="fixed inset-0 cursor-default focus:outline-none"
+        />
+        <div className="dialog-panel relative z-10 w-full max-w-3xl rounded-3xl bg-popover shadow-2xl">
+          <div className="grid gap-4 px-8 py-16 sm:px-12">{children}</div>
+          <DialogPrimitive.Close className="focus-ring absolute right-6 top-6 z-10 rounded-full bg-popover p-2 opacity-70 transition-all hover:opacity-100 hover:bg-accent disabled:pointer-events-none">
+            <Cross2Icon className="h-4 w-4" />
+            <span className="sr-only">Close</span>
+          </DialogPrimitive.Close>
+        </div>
+      </div>
     </DialogPrimitive.Content>
   </DialogPortal>
 ))

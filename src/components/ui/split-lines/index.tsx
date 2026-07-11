@@ -42,7 +42,14 @@ export function SplitLines({
           line.style.color = "transparent"
         })
 
-        const tl = gsap.timeline({ delay: delay / 1000 })
+        // Reveal the paragraph only once the (delayed) timeline actually
+        // starts, so it stays fully hidden while waiting out the delay.
+        const tl = gsap.timeline({
+          delay: delay / 1000,
+          onStart: () => {
+            el.style.opacity = "1"
+          },
+        })
         tl.from(
           self.lines,
           {
@@ -73,8 +80,6 @@ export function SplitLines({
           },
           0
         )
-
-        el.style.opacity = "1"
 
         return tl
       },

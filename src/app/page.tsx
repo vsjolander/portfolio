@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 
-const experience = [
+const workExperience = [
   {
     role: "Head of Digital Direction & Excellence",
     company: "SEB",
@@ -78,6 +78,24 @@ const experience = [
   },
 ]
 
+const education = [
+  {
+    title: "Interactive Art Director",
+    school: "Hyper Island",
+    period: "2015 - 2016",
+  },
+  {
+    title: "Media Technology",
+    school: "Södertörns University",
+    period: "2013",
+  },
+  {
+    title: "Graphic design",
+    school: "Berghs School of Communication",
+    period: "2012",
+  },
+]
+
 const projects = [
   {
     title: "Green Design System",
@@ -128,38 +146,40 @@ const contact = [
 export default function Home() {
   const [cvOpen, setCvOpen] = useState(false)
 
+  const openCv = () => setCvOpen(true)
+
   return (
     <div className="max-w-3xl mx-auto px-6 py-40 space-y-24">
       <section>
         <div className="flex items-center mb-8 gap-6">
           <Logo />
           <nav>
-            <ul className="flex items-center gap-6">
+            <ul className="flex items-center gap-1">
               <li>
-                <FadeIn delay={700}>
+                <FadeIn delay={1000}>
                   <a
                     href="#work"
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    className="focus-ring rounded-full px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors font-medium"
                   >
                     Work
                   </a>
                 </FadeIn>
               </li>
               <li>
-                <FadeIn delay={800}>
-                  <a
-                    href="#about"
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                <FadeIn delay={1100}>
+                  <button
+                    className="focus-ring rounded-full px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors font-medium"
+                    onClick={openCv}
                   >
                     About
-                  </a>
+                  </button>
                 </FadeIn>
               </li>
               <li>
-                <FadeIn delay={900}>
+                <FadeIn delay={1200}>
                   <a
                     href="#contact"
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    className="focus-ring rounded-full px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors font-medium"
                   >
                     Contact
                   </a>
@@ -177,14 +197,14 @@ export default function Home() {
       </section>
 
       {/* Experience — scroll-triggered, staggered by index */}
-      <section id="work">
+      <section>
         <FadeIn delay={350}>
           <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
             Experience
           </p>
         </FadeIn>
         <div className="space-y-10">
-          {experience.slice(0, 2).map((item, i) => (
+          {workExperience.slice(0, 2).map((item, i) => (
             <FadeIn key={i} delay={400 + i * 100}>
               <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-1 md:gap-8">
                 <div>
@@ -203,57 +223,37 @@ export default function Home() {
             </FadeIn>
           ))}
         </div>
-        <FadeIn delay={400 + experience.slice(0, 2).length * 100}>
+        <FadeIn delay={400 + workExperience.slice(0, 2).length * 100}>
           <div className="flex justify-center mt-10 gap-2">
             <Button
-              onClick={() => setCvOpen(true)}
+              onClick={openCv}
               variant="default"
               size="sm"
               className="rounded-full"
             >
               View full resume
             </Button>
-            <Button
-              onClick={() => setCvOpen(true)}
-              variant="outline"
-              size="sm"
-              className="rounded-full"
-            >
-              About
-            </Button>
           </div>
         </FadeIn>
       </section>
 
       {/* Selected work — scroll-triggered, or staggered after Experience if already in view on load */}
-      <section id="projects">
+      <section id="work">
         <FadeIn initialDelay={750}>
           <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
             Selected work
           </p>
         </FadeIn>
-        <div className="space-y-4">
+        <div className="grid grid-cols-2">
           {projects.map((project, i) => (
             <FadeIn key={i} delay={i * 80} initialDelay={850 + i * 100}>
-              <div className="p-6 rounded-xl bg-secondary">
-                <div className="flex justify-between items-start mb-3">
+              <div className="p-2 rounded-xl bg-secondary">
+                <div className="bg-slate-700 aspect-[5/3] rounded-md"></div>
+                <div className="flex justify-between items-center p-4">
                   <h3 className="font-medium">{project.title}</h3>
-                  <span className="text-sm text-muted-foreground ml-4">
+                  <span className="text-sm text-muted-foreground">
                     {project.client}
                   </span>
-                </div>
-                <p className="text-sm text-muted-foreground leading-relaxed mb-4">
-                  {project.description}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {project.tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="text-xs px-2 py-1 rounded-full bg-background text-muted-foreground"
-                    >
-                      {tag}
-                    </span>
-                  ))}
                 </div>
               </div>
             </FadeIn>
@@ -271,15 +271,15 @@ export default function Home() {
         <div className="space-y-3">
           {contact.map((item, i) => (
             <FadeIn key={item.label} delay={i * 60}>
-              <div className="flex items-center gap-4">
-                <span className="text-sm text-muted-foreground w-16">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-foreground w-16">
                   {item.label}
                 </span>
                 <a
                   href={item.href}
                   target={item.href.startsWith("mailto") ? undefined : "_blank"}
                   rel="noopener noreferrer"
-                  className="text-sm hover:text-foreground text-muted-foreground transition-colors"
+                  className="focus-ring rounded-full px-2 text-sm hover:text-foreground text-muted-foreground transition-colors"
                 >
                   {item.text}
                 </a>
@@ -291,82 +291,96 @@ export default function Home() {
 
       {/* CV Modal */}
       <Dialog open={cvOpen} onOpenChange={setCvOpen}>
-        <DialogContent className="max-h-[80vh] max-w-2xl">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              <div className="flex items-center gap-4 mb-4">
+              <div className="flex items-center gap-8 mb-4">
                 <Logo />
-                <h2 className="text-xl font-semibold">
-                  Vilhelm Olof Sjölander
+                <h2 className="text-2xl text-muted-foreground font-medium tracking-tight">
+                  Resume
                 </h2>
               </div>
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-8">
-            {/* Experience Section */}
+          <div className="space-y-16">
             <div>
-              <h3 className="text-lg font-semibold mb-4">Experience</h3>
-              <div className="space-y-6">
-                {experience.map((item, i) => (
-                  <div key={i}>
-                    <div className="flex justify-between items-start mb-1">
-                      <p className="font-medium">{item.role}</p>
-                      <span className="text-sm text-muted-foreground">
-                        {item.period}
-                      </span>
+              <SplitLines
+                className="text-lg leading-[1.425] max-w-2xl mb-10"
+                delay={100}
+              >
+                {
+                  "Vilhelm leads a team at SEB responsible for the bank's design system, accessibility standards, and digital brand. His work sits where design meets engineering and the operational side of keeping design consistent at scale. He cares about the unglamorous parts that make design actually work in a large organization—clear standards, shared tooling, and accessibility that's built in rather than bolted on. He's comfortable moving between strategy and the technical details."
+                }
+              </SplitLines>
+              <FadeIn delay={350}>
+                <h3 className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
+                  Experience
+                </h3>
+              </FadeIn>
+              <div className="space-y-6 mb-12">
+                {workExperience.map((item, i) => (
+                  <FadeIn key={item.role} initialDelay={400 + i * 100}>
+                    <div key={i}>
+                      <div className="flex justify-between items-start mb-1">
+                        <p className="font-medium">{item.role}</p>
+                        <span className="text-sm text-muted-foreground">
+                          {item.period}
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-2">
+                        {item.company}
+                      </p>
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        {item.description}
+                      </p>
                     </div>
-                    <p className="text-sm text-muted-foreground mb-2">
-                      {item.company}
-                    </p>
-                    <p className="text-sm text-muted-foreground leading-relaxed">
-                      {item.description}
-                    </p>
-                  </div>
+                  </FadeIn>
+                ))}
+              </div>
+              <FadeIn delay={350}>
+                <h3 className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
+                  Education
+                </h3>
+              </FadeIn>
+              <div className="space-y-6">
+                {education.map((item, i) => (
+                  <FadeIn key={item.title} initialDelay={400 + i * 100}>
+                    <div key={i}>
+                      <div className="flex justify-between items-start mb-1">
+                        <p className="font-medium">{item.title}</p>
+                        <span className="text-sm text-muted-foreground">
+                          {item.period}
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-2">
+                        {item.school}
+                      </p>
+                    </div>
+                  </FadeIn>
                 ))}
               </div>
             </div>
 
-            {/* Skills Section */}
             <div>
-              <h3 className="text-lg font-semibold mb-4">Skills</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="font-medium text-sm mb-2">Design</p>
-                  <ul className="text-sm text-muted-foreground space-y-1">
-                    <li>• Figma</li>
-                    <li>• User Research</li>
-                    <li>• Design Systems</li>
-                    <li>• Prototyping</li>
-                  </ul>
-                </div>
-                <div>
-                  <p className="font-medium text-sm mb-2">Engineering</p>
-                  <ul className="text-sm text-muted-foreground space-y-1">
-                    <li>• React</li>
-                    <li>• TypeScript</li>
-                    <li>• Web Components</li>
-                    <li>• Node.js</li>
-                  </ul>
-                </div>
-                <div>
-                  <p className="font-medium text-sm mb-2">Leadership</p>
-                  <ul className="text-sm text-muted-foreground space-y-1">
-                    <li>• Team Management</li>
-                    <li>• Stakeholder Alignment</li>
-                    <li>• Strategic Planning</li>
-                    <li>• Mentoring</li>
-                  </ul>
-                </div>
-                <div>
-                  <p className="font-medium text-sm mb-2">Other</p>
-                  <ul className="text-sm text-muted-foreground space-y-1">
-                    <li>• Angular</li>
-                    <li>• MongoDB</li>
-                    <li>• GCP</li>
-                    <li>• GitHub</li>
-                  </ul>
-                </div>
-              </div>
+              <h3 className="text-xs font-mono text-muted-foreground mb-4 tracking-widest uppercase">
+                Skills
+              </h3>
+              <p className="text-sm leading-relaxed">
+                Managing, Leadership, Communication, Facilitating workshops,
+                Project Management, Agile met hodologies, Delegation, Project
+                management, Strategic planning, Business planning, Design
+                systems, Stakeholder management, Budgeting, Decision making,
+                Test driven development, Accessibility, WCAG, Product design,
+                Visual design, User research, Scrum, Jira, SAFE, Sketch, Figma,
+                Adobe Creative Suite, Invision, Graphic Design, Prototyping,
+                Interaction Design, React, Angular, Webcomponents, Google Cloud
+                Platform, AWS, CI, GIT, Github, Magento, Drupal, Wordpress, PHP,
+                SQL, Azure, Webpack, Vite, Vue, Webpack, Rollup, Shopify, Google
+                analytics, Heroku, Vue, Javascript, SCSS, SASS, LESS, Angular,
+                Bootstrap, TypeScript, CSS3, Gulp, Grunt, HTML, Gatsby,
+                Wordpress, Node.js, NextJS, Vercel, RxJS, Bit bucket, CDN,
+                Docker, jQuery,
+              </p>
             </div>
           </div>
         </DialogContent>

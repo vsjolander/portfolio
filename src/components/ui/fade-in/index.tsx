@@ -44,22 +44,29 @@ export function FadeIn({
     const el = ref.current
     if (!el) return
 
-    const rect = el.getBoundingClientRect()
-    const inViewOnLoad = rect.top < window.innerHeight && rect.bottom > 0
+    // Only count as "in view" when the *whole* element is within the viewport
+    // (or, for elements taller than the viewport, when it fills it). This keeps
+    // partially-visible items hidden until they're properly scrolled into view.
+    const isFullyInView = () => {
+      const rect = el.getBoundingClientRect()
+      const vh = window.innerHeight
+      if (rect.height > vh) return rect.top <= 0 && rect.bottom >= vh
+      return rect.top >= 0 && rect.bottom <= vh
+    }
 
-    if (inViewOnLoad) {
+    if (isFullyInView()) {
       const t = setTimeout(() => setVisible(true), initialDelay ?? delay)
       return () => clearTimeout(t)
     }
 
     const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
+      () => {
+        if (isFullyInView()) {
           setTimeout(() => setVisible(true), delay)
           observer.disconnect()
         }
       },
-      { threshold: 0.05, rootMargin: "0px 0px -32px 0px" }
+      { threshold: [0, 0.25, 0.5, 0.75, 1] }
     )
 
     observer.observe(el)
