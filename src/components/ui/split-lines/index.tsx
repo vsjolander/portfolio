@@ -35,7 +35,7 @@ export function SplitLines({
         self.lines.forEach((line) => {
           line.style.setProperty("--reveal", "0%")
           line.style.backgroundImage =
-            "radial-gradient(circle at center, hsl(var(--foreground)) var(--reveal), hsl(var(--text-gradient-1)) calc(var(--reveal) + 10%), hsl(var(--text-gradient-2)) calc(var(--reveal) + 20%), hsl(var(--text-gradient-3)) calc(var(--reveal) + 30%), hsl(var(--text-gradient-3)) calc(var(--reveal) + 40%), hsl(var(--background)) calc(var(--reveal) + 50%))"
+            "radial-gradient(circle at center, hsl(var(--muted-foreground)) var(--reveal), hsl(var(--text-gradient-1)) calc(var(--reveal) + 10%), hsl(var(--text-gradient-2)) calc(var(--reveal) + 20%), hsl(var(--text-gradient-3)) calc(var(--reveal) + 30%), hsl(var(--text-gradient-3)) calc(var(--reveal) + 40%), hsl(var(--background)) calc(var(--reveal) + 50%))"
           line.style.setProperty("background-clip", "text")
           line.style.setProperty("-webkit-background-clip", "text")
           line.style.setProperty("-webkit-text-fill-color", "transparent")

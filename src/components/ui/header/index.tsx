@@ -1,13 +1,13 @@
 import React from "react"
 import Link from "next/link"
-import Logo from "@/components/icons/logo"
+import VOS from "@/components/icons/vos"
 
 const Header = () => {
   return (
     <header className="sticky top-0 z-50 backdrop-blur-sm border-b border-border/40 bg-background/80">
       <div className="max-w-3xl mx-auto px-6 py-4 flex justify-between items-center">
         <Link href="/">
-          <Logo />
+          <VOS />
         </Link>
         <nav>
           <ul className="flex items-center gap-6">

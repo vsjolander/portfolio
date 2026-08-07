@@ -1,7 +1,16 @@
 "use client"
 
 import { useState } from "react"
-import Logo from "@/components/icons/logo"
+import {
+  VOS,
+  IKEA,
+  HugoBoss,
+  Klarna,
+  WWF,
+  Electrolux,
+  Google,
+  Microsoft,
+} from "@/components/icons"
 import { FadeIn } from "@/components/ui/fade-in"
 import { SplitLines } from "@/components/ui/split-lines"
 import {
@@ -18,14 +27,14 @@ const workExperience = [
     company: "SEB",
     period: "2025 – Ongoing",
     description:
-      "Leading the strategic development of digital direction across channels, driving customer-centric innovation and consistency. Oversee governance and adoption of the design system across platforms, ensuring scalability and quality.",
+      "Leading strategic digital direction and design system governance across platforms.",
   },
   {
-    role: "Team Manager, Green Design System",
+    role: "Team Manager",
     company: "SEB",
     period: "2023 – 2025",
     description:
-      "Leading the design system team with responsibility for staff management, team development, and stakeholder collaboration. Driving growth and adoption by aligning business and design needs across digital channels.",
+      "Managed a team of designers on SEB's design system. Responsible for staff management, team development, and aligning business with design needs.",
   },
   {
     role: "Lead Developer, Green Design System",
@@ -49,8 +58,8 @@ const workExperience = [
       "Taught coding bootcamps with a focus on JavaScript, HTML, CSS, and design sprint methodology.",
   },
   {
-    role: "Freelance Designer & Developer",
-    company: "Vilhelm Olof Sjölander AB",
+    role: "Solopreneur - Designer & Developer",
+    company: "VOS AB",
     period: "2018 – Ongoing",
     description:
       "Running a consulting business, designing and developing digital products for clients.",
@@ -120,6 +129,16 @@ const projects = [
   },
 ]
 
+const clientLogos = [
+  { Component: IKEA, name: "IKEA" },
+  { Component: HugoBoss, name: "Hugo Boss" },
+  { Component: Klarna, name: "Klarna" },
+  { Component: WWF, name: "WWF" },
+  { Component: Electrolux, name: "Electrolux" },
+  { Component: Google, name: "Google" },
+  { Component: Microsoft, name: "Microsoft" },
+]
+
 const contact = [
   {
     label: "Email",
@@ -149,10 +168,10 @@ export default function Home() {
   const openCv = () => setCvOpen(true)
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-40 space-y-24">
+    <div className="max-w-2xl mx-auto px-6 py-40 space-y-24">
       <section>
         <div className="flex items-center mb-8 gap-6">
-          <Logo />
+          <VOS />
           <nav>
             <ul className="flex items-center gap-1">
               <li>
@@ -191,7 +210,7 @@ export default function Home() {
 
         <SplitLines className="text-lg leading-[1.425] max-w-2xl">
           {
-            "Vilhelm is a designer and developer who takes projects from idea to launch. He has over 10 years of experience working product design, front-end engineering, and team leadership. He is currently Head of Digital Direction & Excellence at SEB, leading the strategic development of SEB's design system, digital accessibility and direction across channels."
+            "Vilhelm is a designer and developer who takes projects from idea to launch. He has over 10 years of experience working product design, front-end engineering, and team leadership. He is currently working at SEB leading the strategic development of SEB's design system, digital accessibility and direction cross channels."
           }
         </SplitLines>
       </section>
@@ -200,25 +219,30 @@ export default function Home() {
       <section>
         <FadeIn delay={350}>
           <p className="text-xs font-mono text-muted-foreground mb-8 tracking-widest uppercase">
-            Experience
+            Work
           </p>
         </FadeIn>
-        <div className="space-y-10">
-          {workExperience.slice(0, 2).map((item, i) => (
+        <div className="space-y-10 text-sm">
+          {workExperience.slice(0, 2).map((work, i) => (
             <FadeIn key={i} delay={400 + i * 100}>
-              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-1 md:gap-8">
-                <div>
-                  <p className="font-medium">{item.role}</p>
-                  <p className="text-sm text-muted-foreground mb-2">
-                    {item.company}
-                  </p>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
-                    {item.description}
-                  </p>
+              <div className="grid gap-4 sm:grid-cols-[48px_1fr]">
+                <div className="flex aspect-square w-12 items-center justify-center rounded-lg border border-zinc-200 transition-colors duration-300 dark:border-zinc-800 sm:w-full"></div>
+                <div className="grid gap-3">
+                  <div className="flex justify-between">
+                    <div className="flex flex-col gap-1">
+                      <div className="flex flex-col">
+                        <p className="font-medium">{work.company}</p>
+                        <p className="text-muted-foreground">{work.role}</p>
+                      </div>
+                      <p className="text-muted-foreground">
+                        {work.description}
+                      </p>
+                    </div>
+                    <p className="text-sm text-muted-foreground whitespace-nowrap md:text-right">
+                      {work.period}
+                    </p>
+                  </div>
                 </div>
-                <p className="text-sm text-muted-foreground whitespace-nowrap md:text-right">
-                  {item.period}
-                </p>
               </div>
             </FadeIn>
           ))}
@@ -244,12 +268,12 @@ export default function Home() {
             Selected work
           </p>
         </FadeIn>
-        <div className="grid grid-cols-2">
+        <div className="grid grid-cols-2 gap-6">
           {projects.map((project, i) => (
             <FadeIn key={i} delay={i * 80} initialDelay={850 + i * 100}>
-              <div className="p-2 rounded-xl bg-secondary">
-                <div className="bg-slate-700 aspect-[5/3] rounded-md"></div>
-                <div className="flex justify-between items-center p-4">
+              <div className="space-y-3">
+                <div className="bg-zinc-700 aspect-[5/3] rounded-sm"></div>
+                <div className="flex justify-between items-center">
                   <h3 className="font-medium">{project.title}</h3>
                   <span className="text-sm text-muted-foreground">
                     {project.client}
@@ -295,7 +319,7 @@ export default function Home() {
           <DialogHeader>
             <DialogTitle>
               <div className="flex items-center gap-8 mb-4">
-                <Logo />
+                <VOS />
                 <h2 className="text-2xl text-muted-foreground font-medium tracking-tight">
                   Resume
                 </h2>

@@ -1,6 +1,6 @@
 import React from "react"
 
-const Logo: React.FC = () => {
+const VOS: React.FC = () => {
   return (
     <svg
       height="20px"
@@ -24,4 +24,4 @@ const Logo: React.FC = () => {
   )
 }
 
-export default Logo
+export default VOS

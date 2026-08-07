@@ -3,6 +3,10 @@
     "next-devtools": {
       "command": "npx",
       "args": ["-y", "next-devtools-mcp@latest"]
+    },
+    "green-mcp": {
+      "command": "node",
+      "args": ["./node_modules/@sebgroup/green-core/bin/mcp-server"]
     }
   }
 }
