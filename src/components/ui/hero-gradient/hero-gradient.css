@@ -1,0 +1,32 @@
+/* The band is absolutely positioned against the initial containing block, so
+   it spans the full window width regardless of the centred content column and
+   scrolls away with the page. */
+.hero-gradient {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: clamp(200px, 26vh, 300px);
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.hero-gradient__canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 400ms ease-out;
+}
+
+/* Set once WebGPU has drawn its first frame, and removed again if the device is
+   lost, so an uninitialised or dead canvas is never shown. This is not the
+   entrance — the reveal itself is driven by the shader's `entrance` uniform,
+   which stays at 0 until the delay elapses. There is no fallback for browsers
+   without WebGPU; they get the page background. */
+.hero-gradient[data-live="true"] .hero-gradient__canvas {
+  opacity: 1;
+}

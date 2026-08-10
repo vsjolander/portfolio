@@ -8,8 +8,8 @@ const nextConfig = {
   },
   turbopack: {
     rules: {
-      "*.glsl": {
-        loaders: ["raw-loader", "glslify-loader"],
+      "*.wgsl": {
+        loaders: ["raw-loader"],
         as: "*.js",
       },
     },
