@@ -11,9 +11,9 @@ const STOP_COUNT = 5
 /** Uniform buffer size: vec2f + 6 * f32 padded to 32, then 5 * vec4f. */
 const UNIFORM_BYTES = 32 + STOP_COUNT * 16
 /** Target ribbon width in CSS px, before the 3..7 count clamp is applied. */
-const RIBBON_TARGET_PX = 340
-const RIBBON_MIN_COUNT = 1
-const RIBBON_MAX_COUNT = 3
+const RIBBON_TARGET_PX = 1000
+const RIBBON_MIN_COUNT = 2
+const RIBBON_MAX_COUNT = 9
 /** Entrance duration in ms — how long the band takes to unfurl downward. */
 const ENTRANCE_MS = 1200
 /**
@@ -31,7 +31,7 @@ const ENTRANCE_DELAY_MS = 1400
  * values weight opacity harder toward the top edge and pull the visible depth
  * up, reaching 0 at the bottom edge either way.
  */
-const FALLOFF_POW = 4
+const FALLOFF_POW = 3
 /** Field state used when the visitor prefers reduced motion. */
 const FROZEN_TIME = 12
 
@@ -39,18 +39,26 @@ function srgbToLinear(c: number): number {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
 }
 
-/** `#rrggbb` (or `#rgb`) from a CSS custom property -> linear RGB. */
-function parseStop(value: string): [number, number, number] {
-  let hex = value.trim().replace(/^#/, "")
-  if (hex.length === 3) {
-    hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2]
-  }
-  const n = parseInt(hex, 16)
-  if (hex.length !== 6 || Number.isNaN(n)) return [0, 0, 0]
+/**
+ * Any CSS colour -> linear RGB, resolved by the browser rather than parsed
+ * here. Going through a probe element means a stop can be written as
+ * `hsl(var(--background))` and stay pinned to the page background instead of
+ * duplicating its value as a hex that has to be kept in sync by hand.
+ */
+function parseStop(
+  probe: HTMLElement,
+  value: string
+): [number, number, number] {
+  // Seeded with black so an unparseable value falls back to it rather than
+  // inheriting whatever the previous stop resolved to.
+  probe.style.color = "rgb(0, 0, 0)"
+  probe.style.color = value.trim()
+  const rgb = getComputedStyle(probe).color.match(/[\d.]+/g)
+  if (!rgb || rgb.length < 3) return [0, 0, 0]
   return [
-    srgbToLinear(((n >> 16) & 255) / 255),
-    srgbToLinear(((n >> 8) & 255) / 255),
-    srgbToLinear((n & 255) / 255),
+    srgbToLinear(Number(rgb[0]) / 255),
+    srgbToLinear(Number(rgb[1]) / 255),
+    srgbToLinear(Number(rgb[2]) / 255),
   ]
 }
 
@@ -61,11 +69,20 @@ function parseStop(value: string): [number, number, number] {
  */
 function readRamp(): Float32Array {
   const styles = getComputedStyle(document.documentElement)
+  // getComputedStyle only resolves colours for an element in the document, so
+  // the probe is attached for the duration of the read and removed after.
+  const probe = document.createElement("span")
+  probe.style.display = "none"
+  document.body.appendChild(probe)
   const out = new Float32Array(STOP_COUNT * 4)
   for (let i = 0; i < STOP_COUNT; i++) {
-    const [r, g, b] = parseStop(styles.getPropertyValue(`--vos-gradient-${i}`))
+    const [r, g, b] = parseStop(
+      probe,
+      styles.getPropertyValue(`--vos-gradient-${i}`)
+    )
     out.set([r, g, b, 1], i * 4)
   }
+  probe.remove()
   return out
 }
 

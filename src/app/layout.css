@@ -63,12 +63,16 @@ body {
     --text-gradient-2: 285deg 84.71% 72.32%;
     --text-gradient-3: 29.77deg 90.78% 64.47%;
     /* Hero gradient ramp — cyclic, so stop 4 must read back into stop 0.
-       Light: cream -> sand -> sky -> steel -> apricot -> (cream). */
-    --vos-gradient-0: #f6e7cf;
-    --vos-gradient-1: #e3b783;
-    --vos-gradient-2: #8dc0dd;
-    --vos-gradient-3: #4f83ab;
-    --vos-gradient-4: #edbf94;
+       Same palette as the SplitLines text reveal, in the same order: its
+       radial-gradient runs tg-1 -> tg-2 -> tg-3 -> tg-3 -> transparent, so the
+       band holds stop 3 across stop 4 and then dissolves into --background,
+       which stands in for that `transparent` end. Theme-specific values live
+       on --text-gradient-*, so the band follows them in both themes. */
+    --vos-gradient-0: hsl(var(--background));
+    --vos-gradient-1: hsl(var(--text-gradient-1));
+    --vos-gradient-2: hsl(var(--text-gradient-2));
+    --vos-gradient-3: hsl(var(--text-gradient-3));
+    --vos-gradient-4: hsl(var(--text-gradient-3));
   }
   .dark {
     --background: 222.2 0% 4.9%;
@@ -100,12 +104,13 @@ body {
     --text-gradient-1: 205deg 100% 60%;
     --text-gradient-2: 285deg 100% 60%;
     --text-gradient-3: 30deg 100% 60%;
-    /* Dark: near-black -> petrol -> steel blue -> cream -> copper -> (black). */
-    --vos-gradient-0: #05070a;
-    --vos-gradient-1: #0e2f43;
-    --vos-gradient-2: #5590b5;
-    --vos-gradient-3: #ecdfc6;
-    --vos-gradient-4: #9c5426;
+    /* Ramp mirrors the light one — only the --text-gradient-* values above
+       change, so the band tracks the SplitLines reveal in this theme too. */
+    --vos-gradient-0: hsl(var(--background));
+    --vos-gradient-1: hsl(var(--text-gradient-1));
+    --vos-gradient-2: hsl(var(--text-gradient-2));
+    --vos-gradient-3: hsl(var(--text-gradient-3));
+    --vos-gradient-4: hsl(var(--text-gradient-3));
   }
 }
 

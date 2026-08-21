@@ -31,6 +31,14 @@ const TAU : f32 = 6.28318530718;
 // Ribbon direction. ~22deg rather than the reference's 45deg — on a band this
 // wide and shallow a true diagonal only ever shows one or two crossings.
 const THETA : f32 = 0.384;
+// Global rate multiplier on the field's drift. Every time term below is stated
+// at its original rate and scaled by this, so the band's tempo is one number
+// rather than five that have to be kept in proportion.
+const SPEED : f32 = 0.65;
+// How far the ramp phase is allowed to be pushed either side of even spacing.
+// Held below 1 so the warp in ramp() stays monotonic and the stops can never
+// double back on themselves.
+const WIDTH_BIAS : f32 = 0.45;
 
 @vertex
 fn vs(@builtin(vertex_index) i : u32) -> @builtin(position) vec4f {
@@ -70,8 +78,17 @@ fn fbm(p0 : vec2f) -> f32 {
 }
 
 // Cyclic lookup into the 5 stops, smoothstepped between neighbours.
-fn ramp(t : f32) -> vec3f {
-  let x = fract(t) * 5.0;
+//
+// `bias` reshapes the phase *within* one cycle. The sine term vanishes at both
+// 0 and 1 — the two ends that land on stop 0 — so the cycle still starts and
+// ends on exactly the background colour no matter what the bias is, and only
+// the rate the phase advances in between changes. Negative bias holds the ramp
+// near stop 0 for longer and fattens the background-coloured ribbon; positive
+// bias hurries past it and thins the ribbon out.
+fn ramp(t : f32, bias : f32) -> vec3f {
+  let phase = fract(t);
+  let warped = clamp(phase + bias * sin(TAU * phase) / TAU, 0.0, 1.0);
+  let x = warped * 5.0;
   let i = u32(floor(x)) % 5u;
   let j = (i + 1u) % 5u;
   let f = fract(x);
@@ -95,7 +112,7 @@ fn fs(@builtin(position) frag : vec4f) -> @location(0) vec4f {
   // noise space — the band is a letterbox slot onto a much larger field rather
   // than a stretched copy of it.
   let q = px / U.ribbonSize;
-  let t = U.time;
+  let t = U.time * SPEED;
 
   // Two-pass domain warp: the second fbm is displaced by the first, which is
   // what makes the ribbon count breathe instead of marching at fixed spacing.
@@ -122,7 +139,14 @@ fn fs(@builtin(position) frag : vec4f) -> @location(0) vec4f {
   var alpha = vertical * corners * clamp(U.entrance * 1.5, 0.0, 1.0);
 
   // --- Output --------------------------------------------------------------
-  var col = linearToSrgb(ramp(field));
+  // Sampled at roughly a quarter of the ribbon frequency, so the bias drifts
+  // across several ribbons rather than per-ribbon: without it every cycle of
+  // the field lays down an identically proportioned ribbon set and the band
+  // reads as a repeating pattern. One octave is enough — this only has to be
+  // smooth and slow, not detailed.
+  let widthBias =
+    (vnoise(q * 0.22 + vec2f(t * 0.03, t * -0.02)) - 0.5) * 2.0 * WIDTH_BIAS;
+  var col = linearToSrgb(ramp(field, widthBias));
 
   // Triangular-PDF dither at +/- 1/255. Without it an 8-bit ramp this slow and
   // this wide bands visibly, especially through the near-transparent tail.

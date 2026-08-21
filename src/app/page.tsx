@@ -213,7 +213,7 @@ export default function Home() {
 
           <SplitLines className="text-lg leading-[1.425] max-w-2xl">
             {
-              "Vilhelm is a designer and developer who takes projects from idea to launch. He has over 10 years of experience working product design, front-end engineering, and team leadership. He is currently working at SEB leading the strategic development of SEB's design system, digital accessibility and direction cross channels."
+              "Vilhelm is a designer and developer who takes projects from idea to launch. He has over 10 years of experience working product design, front-end engineering, and team leadership. He is currently working at SEB leading the strategic development of SEB's design system and direction cross channels."
             }
           </SplitLines>
         </section>
