@@ -39,6 +39,13 @@ const SPEED : f32 = 0.65;
 // Held below 1 so the warp in ramp() stays monotonic and the stops can never
 // double back on themselves.
 const WIDTH_BIAS : f32 = 0.45;
+// Grain amplitude in sRGB units at full strength — about +/-8/255, which reads
+// as texture rather than as noise.
+const GRAIN_AMOUNT : f32 = 0.03;
+// How much of the half-cycle the grain takes to fade in as the ramp leaves
+// stop 0. Grain is kept off the background-coloured ribbons entirely, so it
+// never speckles what should read as bare page.
+const GRAIN_FADE : f32 = 0.5;
 
 @vertex
 fn vs(@builtin(vertex_index) i : u32) -> @builtin(position) vec4f {
@@ -77,6 +84,14 @@ fn fbm(p0 : vec2f) -> f32 {
   return sum;
 }
 
+struct Ramp {
+  // Linear RGB at this point on the ramp.
+  colour : vec3f,
+  // 0 where the ramp sits on stop 0 — the page background — rising to 1 across
+  // the coloured part of the cycle. Used to keep grain off the background.
+  ink : f32,
+};
+
 // Cyclic lookup into the 5 stops, smoothstepped between neighbours.
 //
 // `bias` reshapes the phase *within* one cycle. The sine term vanishes at both
@@ -85,7 +100,7 @@ fn fbm(p0 : vec2f) -> f32 {
 // the rate the phase advances in between changes. Negative bias holds the ramp
 // near stop 0 for longer and fattens the background-coloured ribbon; positive
 // bias hurries past it and thins the ribbon out.
-fn ramp(t : f32, bias : f32) -> vec3f {
+fn ramp(t : f32, bias : f32) -> Ramp {
   let phase = fract(t);
   let warped = clamp(phase + bias * sin(TAU * phase) / TAU, 0.0, 1.0);
   let x = warped * 5.0;
@@ -93,7 +108,15 @@ fn ramp(t : f32, bias : f32) -> vec3f {
   let j = (i + 1u) % 5u;
   let f = fract(x);
   let s = f * f * (3.0 - 2.0 * f);
-  return mix(U.stops[i].rgb, U.stops[j].rgb, s);
+  // The cycle passes through stop 0 at both ends, so distance from the nearer
+  // end is distance from the page colour. Doubled to span 0..1 over the half
+  // cycle, then eased so the grain arrives with the colour rather than
+  // switching on at a hard edge.
+  let fromBg = min(warped, 1.0 - warped) * 2.0;
+  return Ramp(
+    mix(U.stops[i].rgb, U.stops[j].rgb, s),
+    smoothstep(0.0, GRAIN_FADE, fromBg)
+  );
 }
 
 fn linearToSrgb(c : vec3f) -> vec3f {
@@ -146,7 +169,17 @@ fn fs(@builtin(position) frag : vec4f) -> @location(0) vec4f {
   // smooth and slow, not detailed.
   let widthBias =
     (vnoise(q * 0.22 + vec2f(t * 0.03, t * -0.02)) - 0.5) * 2.0 * WIDTH_BIAS;
-  var col = linearToSrgb(ramp(field, widthBias));
+  let ramped = ramp(field, widthBias);
+  var col = linearToSrgb(ramped.colour);
+
+  // Static per-pixel grain, applied in sRGB so its strength is perceptual and
+  // scaled by `ink` so the background-coloured ribbons stay clean. Deliberately
+  // not animated: on a band drifting this slowly, grain that resamples every
+  // frame reads as shimmer. Triangular PDF — two hashes summed — because
+  // uniform noise clumps visibly at this amplitude.
+  let grain =
+    hash2(px + vec2f(3.7, 91.3)) + hash2(px * 1.7 + vec2f(57.1, 12.9)) - 1.0;
+  col += vec3f(grain * GRAIN_AMOUNT * ramped.ink);
 
   // Triangular-PDF dither at +/- 1/255. Without it an 8-bit ramp this slow and
   // this wide bands visibly, especially through the near-transparent tail.
