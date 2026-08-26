@@ -1,129 +1,87 @@
-// Hero gradient — a soft band of drifting colour ribbons hanging from the top
-// edge of the window. Colours come from a cyclic 5-stop ramp driven by a
-// domain-warped fbm field; the band's depth sags toward the horizontal centre
-// and its alpha decays with distance from the top edge.
+// Hero glow — a soft glow blooming from the top-centre of the window. It grows
+// downward as the entrance plays, peaks at the top edge and horizontal centre,
+// and falls off toward the bottom and the left/right screen edges. Over that
+// base envelope a slow, low-frequency diagonal "sheen" drifts across, so the
+// light reads like a soft caustic streak rather than a static bloom. A fine
+// per-pixel grain adds texture.
+//
+// The palette (dark -> mid -> light) is fixed. Only its *direction* swaps with
+// the theme: on dark backgrounds the brightest stop sits at the top (a light
+// glow fading into the dark page); on light backgrounds the darkest stop sits
+// at the top (a dark wash fading into the light page).
 
 struct Uniforms {
   // Canvas size in device pixels.
   resolution : vec2f,
-  // Seconds since mount. Frozen when the visitor prefers reduced motion.
+  // Seconds since the entrance armed. Drives the sheen drift.
   time : f32,
-  // Entrance progress, 0 -> 1 over ~1.2s. Scales the band's depth so it
-  // unfurls downward rather than fading in flat.
+  // Entrance progress, 0 -> 1. Scales the band's depth so it unfurls downward.
   entrance : f32,
-  // Width of one ribbon in device pixels. Derived on the CPU by clamping the
-  // ribbon count to 3..7 across the viewport, so a phone never shows a single
-  // undifferentiated wash and an ultrawide never shows four 600px slabs.
-  ribbonSize : f32,
-  // Depth in device pixels at which alpha reaches 0, at the horizontal centre.
+  // Full band depth in device pixels (the height at entrance == 1).
   depthMax : f32,
-  // Exponent of the vertical alpha decay. >1 weights opacity toward the top.
+  // 0 = brightest stop at the top (dark theme), 1 = darkest at the top (light).
+  flip : f32,
+  // Exponent of the vertical decay. >1 pulls the glow up toward the top edge.
   falloffPow : f32,
+  // How bright the left/right screen edges stay (0 = fully dark).
+  sideMin : f32,
+  // Exponent of the horizontal decay. >1 tightens the glow toward the centre.
+  sidePow : f32,
+  // Grain cell size in device pixels. 1 is per-pixel grain; larger is chunkier.
+  noiseScale : f32,
+  // Grain strength, 0 (off) .. 1 (heavy).
+  noiseAmount : f32,
+  // Overall glow brightness multiplier.
+  glowIntensity : f32,
+  // Strength of the blue-green tint blended into the darker end, 0..1.
+  tintAmount : f32,
+  // How sharply the tint ramps in toward the dark end.
+  tintPow : f32,
+  // Diagonal sheen: orientation in radians.
+  sheenAngle : f32,
+  // Diagonal sheen: spatial frequency (soft ridges across the band).
+  sheenFreq : f32,
+  // Diagonal sheen: drift speed.
+  sheenSpeed : f32,
+  // Diagonal sheen: floor in its darkest trough, 0..1.
+  sheenMin : f32,
+  // Diagonal sheen: contrast exponent.
+  sheenPow : f32,
   _pad : f32,
-  // Ramp stops in *linear* RGB. Cyclic: stop 4 blends back into stop 0, which
-  // is what lets the field be sampled with fract() without a seam.
-  stops : array<vec4f, 5>,
 };
 
 @group(0) @binding(0) var<uniform> U : Uniforms;
 
-const TAU : f32 = 6.28318530718;
-// Ribbon direction. ~22deg rather than the reference's 45deg — on a band this
-// wide and shallow a true diagonal only ever shows one or two crossings.
-const THETA : f32 = 0.384;
-// Global rate multiplier on the field's drift. Every time term below is stated
-// at its original rate and scaled by this, so the band's tempo is one number
-// rather than five that have to be kept in proportion.
-const SPEED : f32 = 0.65;
-// How far the ramp phase is allowed to be pushed either side of even spacing.
-// Held below 1 so the warp in ramp() stays monotonic and the stops can never
-// double back on themselves.
-const WIDTH_BIAS : f32 = 0.45;
-// Grain amplitude in sRGB units at full strength — about +/-8/255, which reads
-// as texture rather than as noise.
-const GRAIN_AMOUNT : f32 = 0.03;
-// How much of the half-cycle the grain takes to fade in as the ramp leaves
-// stop 0. Grain is kept off the background-coloured ribbons entirely, so it
-// never speckles what should read as bare page.
-const GRAIN_FADE : f32 = 0.5;
+// Palette in sRGB 0..1, written straight to the (non-sRGB) canvas.
+const C0 : vec3f = vec3f(0.054902, 0.098039, 0.117647); // #0E191E
+const C1 : vec3f = vec3f(0.733333, 0.788235, 0.780392); // #BBC9C7
+const C2 : vec3f = vec3f(0.874510, 0.917647, 0.909804); // #DFEAE8
+// Blue-green hue push, roughly luminance-preserving (its own luminance ~1), so
+// tinting shifts hue rather than brightness. Red is cut, green/blue lifted.
+const TINT_BIAS : vec3f = vec3f(0.55, 1.08, 1.05);
 
 @vertex
 fn vs(@builtin(vertex_index) i : u32) -> @builtin(position) vec4f {
-  // Single oversized triangle covering the clip volume; cheaper than a quad
-  // and avoids the diagonal seam two triangles would introduce.
+  // Single oversized triangle covering the clip volume.
   var p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
   return vec4f(p[i], 0.0, 1.0);
 }
 
+// White-noise hash, 0..1. Independent per input cell, which is what makes the
+// grain read as grain rather than smooth cloud.
 fn hash2(p : vec2f) -> f32 {
   var p3 = fract(vec3f(p.x, p.y, p.x) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
   return fract((p3.x + p3.y) * p3.z);
 }
 
-fn vnoise(p : vec2f) -> f32 {
-  let i = floor(p);
-  let f = fract(p);
-  let u = f * f * (3.0 - 2.0 * f);
-  let a = hash2(i);
-  let b = hash2(i + vec2f(1.0, 0.0));
-  let c = hash2(i + vec2f(0.0, 1.0));
-  let d = hash2(i + vec2f(1.0, 1.0));
-  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-fn fbm(p0 : vec2f) -> f32 {
-  var p = p0;
-  var amp = 0.5;
-  var sum = 0.0;
-  for (var i = 0; i < 4; i++) {
-    sum += amp * vnoise(p);
-    p = p * 2.02 + vec2f(11.7, 3.1);
-    amp *= 0.5;
+// Smooth 3-stop ramp: t 0 -> C0, 0.5 -> C1, 1 -> C2.
+fn ramp3(t : f32) -> vec3f {
+  let x = clamp(t, 0.0, 1.0) * 2.0;
+  if (x < 1.0) {
+    return mix(C0, C1, smoothstep(0.0, 1.0, x));
   }
-  return sum;
-}
-
-struct Ramp {
-  // Linear RGB at this point on the ramp.
-  colour : vec3f,
-  // 0 where the ramp sits on stop 0 — the page background — rising to 1 across
-  // the coloured part of the cycle. Used to keep grain off the background.
-  ink : f32,
-};
-
-// Cyclic lookup into the 5 stops, smoothstepped between neighbours.
-//
-// `bias` reshapes the phase *within* one cycle. The sine term vanishes at both
-// 0 and 1 — the two ends that land on stop 0 — so the cycle still starts and
-// ends on exactly the background colour no matter what the bias is, and only
-// the rate the phase advances in between changes. Negative bias holds the ramp
-// near stop 0 for longer and fattens the background-coloured ribbon; positive
-// bias hurries past it and thins the ribbon out.
-fn ramp(t : f32, bias : f32) -> Ramp {
-  let phase = fract(t);
-  let warped = clamp(phase + bias * sin(TAU * phase) / TAU, 0.0, 1.0);
-  let x = warped * 5.0;
-  let i = u32(floor(x)) % 5u;
-  let j = (i + 1u) % 5u;
-  let f = fract(x);
-  let s = f * f * (3.0 - 2.0 * f);
-  // The cycle passes through stop 0 at both ends, so distance from the nearer
-  // end is distance from the page colour. Doubled to span 0..1 over the half
-  // cycle, then eased so the grain arrives with the colour rather than
-  // switching on at a hard edge.
-  let fromBg = min(warped, 1.0 - warped) * 2.0;
-  return Ramp(
-    mix(U.stops[i].rgb, U.stops[j].rgb, s),
-    smoothstep(0.0, GRAIN_FADE, fromBg)
-  );
-}
-
-fn linearToSrgb(c : vec3f) -> vec3f {
-  let x = max(c, vec3f(0.0));
-  let lo = x * 12.92;
-  let hi = 1.055 * pow(x, vec3f(1.0 / 2.4)) - 0.055;
-  return select(hi, lo, x <= vec3f(0.0031308));
+  return mix(C1, C2, smoothstep(0.0, 1.0, x - 1.0));
 }
 
 @fragment
@@ -131,63 +89,54 @@ fn fs(@builtin(position) frag : vec4f) -> @location(0) vec4f {
   // Device pixels, y increasing downward from the top edge of the band.
   let px = frag.xy;
 
-  // Sample the noise in ribbon units on *both* axes so ribbons stay square in
-  // noise space — the band is a letterbox slot onto a much larger field rather
-  // than a stretched copy of it.
-  let q = px / U.ribbonSize;
-  let t = U.time * SPEED;
-
-  // Two-pass domain warp: the second fbm is displaced by the first, which is
-  // what makes the ribbon count breathe instead of marching at fixed spacing.
-  let w1 = fbm(q * 0.55 + vec2f(t * 0.07, t * -0.04));
-  let w2 = fbm(q * 0.90 + vec2f(w1 * 1.6, -w1 * 1.1) + vec2f(-t * 0.05, t * 0.03));
-
-  let dir = vec2f(cos(THETA), sin(THETA));
-  let field = dot(q, dir) * 0.85 + w2 * 1.5 + t * 0.06;
-
-  // --- Shape ---------------------------------------------------------------
+  // Depth grows from the top edge as the entrance plays, so the glow unfurls
+  // downward rather than fading in flat.
+  let depth = max(U.depthMax * U.entrance, 1.0);
+  // 0 at the top edge, 1 at the bottom of the grown band.
+  let v = clamp(px.y / depth, 0.0, 1.0);
+  // 0..1 across the window width.
   let u = px.x / max(U.resolution.x, 1.0);
-  // 0 at the left/right edges, 1 at the horizontal centre.
-  let centre = 0.5 - 0.5 * cos(TAU * u);
 
-  // The band sags: full depth at centre, 60% of it at the side edges.
-  let depth = U.depthMax * (0.6 + 0.4 * centre) * U.entrance;
-  let d = clamp(px.y / max(depth, 1.0), 0.0, 1.0);
-  let vertical = pow(1.0 - d, U.falloffPow);
+  // Vertical glow profile: brightest at the top, easing to nothing at the
+  // bottom of the grown band.
+  let vert = pow(1.0 - v, U.falloffPow);
 
-  // Taper toward the corners so the top edge blooms from centre rather than
-  // slamming a full-strength colour bar against the browser chrome.
-  let corners = 0.5 + 0.5 * centre;
+  // Horizontal glow profile: brightest at the centre, falling toward the
+  // left/right edges but never below sideMin.
+  let cx = 1.0 - abs(u - 0.5) * 2.0;
+  let horiz = pow(clamp(cx, 0.0, 1.0), U.sidePow);
+  let side = mix(U.sideMin, 1.0, horiz);
 
-  var alpha = vertical * corners * clamp(U.entrance * 1.5, 0.0, 1.0);
+  // Diagonal sheen: soft light/dark ridges along `sheenAngle`, drifting slowly
+  // with time. Two offset waves keep it from reading as a mechanical stripe.
+  // Sampled in aspect-corrected, height-normalised space.
+  let asp = U.resolution.x / max(U.resolution.y, 1.0);
+  let p = vec2f(u * asp, px.y / max(U.resolution.y, 1.0));
+  let d = p.x * cos(U.sheenAngle) + p.y * sin(U.sheenAngle);
+  let s1 = sin(d * U.sheenFreq - U.time * U.sheenSpeed);
+  let s2 = sin(d * U.sheenFreq * 0.6 + U.time * U.sheenSpeed * 0.7 + 1.3);
+  let wave = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
+  let sheen = mix(U.sheenMin, 1.0, pow(wave, U.sheenPow));
 
-  // --- Output --------------------------------------------------------------
-  // Sampled at roughly a quarter of the ribbon frequency, so the bias drifts
-  // across several ribbons rather than per-ribbon: without it every cycle of
-  // the field lays down an identically proportioned ribbon set and the band
-  // reads as a repeating pattern. One octave is enough — this only has to be
-  // smooth and slow, not detailed.
-  let widthBias =
-    (vnoise(q * 0.22 + vec2f(t * 0.03, t * -0.02)) - 0.5) * 2.0 * WIDTH_BIAS;
-  let ramped = ramp(field, widthBias);
-  var col = linearToSrgb(ramped.colour);
+  // Grain: an independent random value per grain cell, centred on 1 so it
+  // lightens and darkens the glow in equal measure.
+  let g = hash2(floor(px / max(U.noiseScale, 1.0)));
+  let tex = 1.0 + (g - 0.5) * U.noiseAmount;
 
-  // Static per-pixel grain, applied in sRGB so its strength is perceptual and
-  // scaled by `ink` so the background-coloured ribbons stay clean. Deliberately
-  // not animated: on a band drifting this slowly, grain that resamples every
-  // frame reads as shimmer. Triangular PDF — two hashes summed — because
-  // uniform noise clumps visibly at this amplitude.
-  let grain =
-    hash2(px + vec2f(3.7, 91.3)) + hash2(px * 1.7 + vec2f(57.1, 12.9)) - 1.0;
-  col += vec3f(grain * GRAIN_AMOUNT * ramped.ink);
+  // Colour position along the palette — brightest stop at the top on dark
+  // themes, darkest at the top on light ones.
+  let t = mix(1.0 - v, v, U.flip);
+  var col = ramp3(t);
 
-  // Triangular-PDF dither at +/- 1/255. Without it an 8-bit ramp this slow and
-  // this wide bands visibly, especially through the near-transparent tail.
-  let dither = (hash2(px) + hash2(px + vec2f(19.7, 7.3)) - 1.0) / 255.0;
-  col += vec3f(dither);
-  alpha = clamp(alpha + dither, 0.0, 1.0);
+  // Push a blue-green tint into the darker end of the ramp (t -> 0), preserving
+  // luminance so it reads as a hue shift rather than a brightness change.
+  let tintW = pow(1.0 - t, U.tintPow) * U.tintAmount;
+  let lum = dot(col, vec3f(0.2126, 0.7152, 0.0722));
+  col = mix(col, lum * TINT_BIAS, tintW);
 
-  // Premultiplied — the canvas is configured to composite that way over the
-  // page background, which is what makes the alpha tail work in both themes.
-  return vec4f(clamp(col, vec3f(0.0), vec3f(1.0)) * alpha, alpha);
+  // Premultiplied — the glow's own profile is its alpha, so it composites over
+  // the page background and fades into it toward the bottom and edges.
+  let alpha =
+    clamp(vert * side * sheen * U.glowIntensity * tex, 0.0, 1.0);
+  return vec4f(col * alpha, alpha);
 }

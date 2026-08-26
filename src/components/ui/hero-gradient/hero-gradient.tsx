@@ -6,15 +6,9 @@ import shaderSource from "./hero-gradient.wgsl"
 
 import "./hero-gradient.css"
 
-/** Number of stops in the cyclic colour ramp. Must match the shader. */
-const STOP_COUNT = 5
-/** Uniform buffer size: vec2f + 6 * f32 padded to 32, then 5 * vec4f. */
-const UNIFORM_BYTES = 32 + STOP_COUNT * 16
-/** Target ribbon width in CSS px, before the 3..7 count clamp is applied. */
-const RIBBON_TARGET_PX = 1000
-const RIBBON_MIN_COUNT = 2
-const RIBBON_MAX_COUNT = 9
-/** Entrance duration in ms — how long the band takes to unfurl downward. */
+/** Uniform buffer: 20 * f32 = 80 bytes (multiple of 16). */
+const UNIFORM_BYTES = 80
+/** Entrance duration in ms — how long the glow takes to unfurl downward. */
 const ENTRANCE_MS = 1200
 /**
  * How long the band is held fully transparent after mount, so the page's own
@@ -23,67 +17,53 @@ const ENTRANCE_MS = 1200
  * Overridable per-instance via the `delay` prop.
  *
  * WebGPU still initialises immediately during the wait — only the reveal is
- * deferred — so the unfurl starts on an already-warm device.
+ * deferred — so the grow-in starts on an already-warm device.
  */
 const ENTRANCE_DELAY_MS = 1400
 /**
- * Exponent of the vertical alpha decay across the band. 1 is linear; higher
- * values weight opacity harder toward the top edge and pull the visible depth
- * up, reaching 0 at the bottom edge either way.
+ * Exponent of the vertical brightness/alpha decay across the band. >1 pulls the
+ * glow up toward the top edge; it reaches 0 at the bottom either way.
  */
 const FALLOFF_POW = 3
-/** Field state used when the visitor prefers reduced motion. */
-const FROZEN_TIME = 12
-
-function srgbToLinear(c: number): number {
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
-}
+/** How bright the left/right screen edges stay (0 = fully dark, 1 = no dimming). */
+const SIDE_MIN = 0
+/** Exponent of the horizontal decay. >1 tightens the glow toward the centre. */
+const SIDE_POW = 2.2
+/** Overall glow brightness, 0..1. Turn down if the bloom is too hot. */
+const GLOW_INTENSITY = 0.8
+/** Grain cell size in CSS px. 1 is per-pixel grain; higher is chunkier. */
+const NOISE_SCALE = 0.2
+/** Grain strength, 0 (off) .. 1 (heavy). */
+const NOISE_AMOUNT = 0
+/** Blue-green tint blended into the darker end of the gradient, 0..1. */
+const TINT_AMOUNT = 2
+/** How sharply the tint ramps in toward the dark end. Higher = more confined. */
+const TINT_POW = 1
+/** Diagonal sheen orientation, in radians. */
+const SHEEN_ANGLE = 2.2
+/** Diagonal sheen spatial frequency — how many soft ridges cross the band. */
+const SHEEN_FREQ = 1.8
+/** Diagonal sheen drift speed. Small = slow. */
+const SHEEN_SPEED = 0.12
+/** How dark the sheen's troughs get, 0 (deep) .. 1 (no sheen). */
+const SHEEN_MIN = 0.45
+/** Diagonal sheen contrast exponent. Higher = tighter bright ridge. */
+const SHEEN_POW = 1.6
+/** Sheen phase used when the visitor prefers reduced motion (frozen frame). */
+const FROZEN_TIME = 6
+/**
+ * Device-pixel-ratio cap. A smooth gradient carries no high-frequency detail,
+ * so 2x is plenty and keeps the fragment count down on this short band.
+ */
+const MAX_DPR = 2
 
 /**
- * Any CSS colour -> linear RGB, resolved by the browser rather than parsed
- * here. Going through a probe element means a stop can be written as
- * `hsl(var(--background))` and stay pinned to the page background instead of
- * duplicating its value as a hex that has to be kept in sync by hand.
+ * Whether the page is in dark mode — next-themes toggles `.dark` on <html>.
+ * Drives the gradient direction: brightest stop at the top on dark, darkest at
+ * the top on light.
  */
-function parseStop(
-  probe: HTMLElement,
-  value: string
-): [number, number, number] {
-  // Seeded with black so an unparseable value falls back to it rather than
-  // inheriting whatever the previous stop resolved to.
-  probe.style.color = "rgb(0, 0, 0)"
-  probe.style.color = value.trim()
-  const rgb = getComputedStyle(probe).color.match(/[\d.]+/g)
-  if (!rgb || rgb.length < 3) return [0, 0, 0]
-  return [
-    srgbToLinear(Number(rgb[0]) / 255),
-    srgbToLinear(Number(rgb[1]) / 255),
-    srgbToLinear(Number(rgb[2]) / 255),
-  ]
-}
-
-/**
- * Reads the ramp from the `--vos-gradient-*` tokens on :root, so the palettes
- * live in layout.css next to the other theme tokens and swap with next-themes'
- * `.dark` class without touching the shader.
- */
-function readRamp(): Float32Array {
-  const styles = getComputedStyle(document.documentElement)
-  // getComputedStyle only resolves colours for an element in the document, so
-  // the probe is attached for the duration of the read and removed after.
-  const probe = document.createElement("span")
-  probe.style.display = "none"
-  document.body.appendChild(probe)
-  const out = new Float32Array(STOP_COUNT * 4)
-  for (let i = 0; i < STOP_COUNT; i++) {
-    const [r, g, b] = parseStop(
-      probe,
-      styles.getPropertyValue(`--vos-gradient-${i}`)
-    )
-    out.set([r, g, b, 1], i * 4)
-  }
-  probe.remove()
-  return out
+function isDark(): boolean {
+  return document.documentElement.classList.contains("dark")
 }
 
 export function HeroGradient({
@@ -112,8 +92,8 @@ export function HeroGradient({
       reduced: false,
       width: 1,
       height: 1,
-      ramp: readRamp(),
-      rampDirty: true,
+      dpr: 0,
+      dark: isDark(),
       start: 0,
       // False until the entrance delay elapses. While false the shader is still
       // running, but every frame comes out fully transparent.
@@ -210,24 +190,29 @@ export function HeroGradient({
       })
 
       // --- sizing ----------------------------------------------------------
-      // DPR is capped at 1: the effect has no detail above a few cycles per
-      // screen, so rendering 4x the fragments on a Retina display buys nothing.
-      //
       // Called at the top of every frame rather than driven by a
       // ResizeObserver alone — an observer can end up owning a disposed
       // instance across a Fast Refresh, and a canvas whose drawing buffer
       // disagrees with its CSS box renders a stretched frame. One
       // getBoundingClientRect per frame on a single element is cheap, and it
       // makes sizing correct regardless of observer delivery.
+      //
+      // DPR is tracked here too, not read once at init: dragging the window to
+      // a display with a different pixel ratio has to resize the drawing buffer,
+      // or the gradient renders at the wrong resolution.
       const syncSize = (): boolean => {
         const rect = root.getBoundingClientRect()
         const w = Math.max(1, Math.round(rect.width))
         const h = Math.max(1, Math.round(rect.height))
-        if (w === state.width && h === state.height) return false
+        const dpr = Math.min(MAX_DPR, window.devicePixelRatio || 1)
+        if (w === state.width && h === state.height && dpr === state.dpr) {
+          return false
+        }
         state.width = w
         state.height = h
-        canvas.width = w
-        canvas.height = h
+        state.dpr = dpr
+        canvas.width = Math.max(1, Math.round(w * dpr))
+        canvas.height = Math.max(1, Math.round(h * dpr))
         return true
       }
       syncSize()
@@ -238,32 +223,35 @@ export function HeroGradient({
         if (!state.start) state.start = nowMs
         const elapsed = (nowMs - state.start) / 1000
 
-        // Before arming this is 0, which collapses the band's depth and its
-        // alpha to nothing — the pass still runs, but paints nothing.
+        // Before arming this is 0, which collapses the band's depth to nothing —
+        // the pass still runs, but paints nothing.
         const entrance = !state.armed
           ? 0
           : state.reduced
             ? 1
             : 1 - Math.pow(1 - Math.min(1, (elapsed * 1000) / ENTRANCE_MS), 3)
 
-        const count = Math.min(
-          RIBBON_MAX_COUNT,
-          Math.max(RIBBON_MIN_COUNT, Math.round(state.width / RIBBON_TARGET_PX))
-        )
-
-        f32[0] = state.width
-        f32[1] = state.height
+        f32[0] = canvas.width
+        f32[1] = canvas.height
         f32[2] = state.reduced ? FROZEN_TIME : elapsed
         f32[3] = entrance
-        f32[4] = state.width / count
-        // Depth is the full band height, so alpha reaches exactly 0 at the
-        // bottom edge at every viewport size and can never be clipped.
-        f32[5] = state.height
+        // Full band depth: the glow reaches 0 exactly at the bottom edge at any
+        // viewport size, so it can never be clipped.
+        f32[4] = canvas.height
+        f32[5] = state.dark ? 0 : 1
         f32[6] = FALLOFF_POW
-        if (state.rampDirty) {
-          f32.set(state.ramp, 8)
-          state.rampDirty = false
-        }
+        f32[7] = SIDE_MIN
+        f32[8] = SIDE_POW
+        f32[9] = NOISE_SCALE * state.dpr
+        f32[10] = NOISE_AMOUNT
+        f32[11] = GLOW_INTENSITY
+        f32[12] = TINT_AMOUNT
+        f32[13] = TINT_POW
+        f32[14] = SHEEN_ANGLE
+        f32[15] = SHEEN_FREQ
+        f32[16] = SHEEN_SPEED
+        f32[17] = SHEEN_MIN
+        f32[18] = SHEEN_POW
         dev.queue.writeBuffer(uniformBuffer, 0, uniforms)
 
         const encoder = dev.createCommandEncoder()
@@ -294,6 +282,9 @@ export function HeroGradient({
       }
       state.redraw = drawOnce
 
+      // The sheen drifts continuously, so the loop runs for as long as the band
+      // is on screen (the IntersectionObserver below stops it once scrolled
+      // past). Reduced motion draws a single frozen frame instead.
       const loop = (now: number) => {
         if (disposed) return
         render(now)
@@ -314,11 +305,12 @@ export function HeroGradient({
         frame = 0
       }
 
-      // With reduced motion there is no frame loop to pick the new size up, so
-      // a resize has to trigger its own redraw.
+      // Once the grow-in has settled (or under reduced motion) there is no frame
+      // loop running, so a resize has to trigger its own redraw. While the loop
+      // is live it picks the new size up on its own.
       const resizeObserver = new ResizeObserver(() => {
         if (disposed) return
-        if (syncSize() && state.reduced) drawOnce()
+        if (syncSize() && !frame) drawOnce()
       })
       resizeObserver.observe(root)
       registerCleanup(() => resizeObserver.disconnect())
@@ -348,11 +340,11 @@ export function HeroGradient({
         document.removeEventListener("visibilitychange", onVisibility)
       )
 
-      // next-themes toggles `.dark` on <html>; re-read the ramp when it does.
+      // next-themes toggles `.dark` on <html>; flip the gradient direction when
+      // it does.
       const themeObserver = new MutationObserver(() => {
-        state.ramp = readRamp()
-        state.rampDirty = true
-        if (state.reduced) drawOnce()
+        state.dark = isDark()
+        if (!frame) drawOnce()
       })
       themeObserver.observe(document.documentElement, {
         attributes: true,
