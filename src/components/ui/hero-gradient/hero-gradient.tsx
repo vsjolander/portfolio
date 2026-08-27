@@ -6,61 +6,187 @@ import shaderSource from "./hero-gradient.wgsl"
 
 import "./hero-gradient.css"
 
-/** Uniform buffer: 20 * f32 = 80 bytes (multiple of 16). */
-const UNIFORM_BYTES = 80
-/** Entrance duration in ms — how long the glow takes to unfurl downward. */
-const ENTRANCE_MS = 1200
+/** Uniform buffer: 32 * f32 = 128 bytes (multiple of 16). */
+const UNIFORM_BYTES = 128
 /**
- * How long the band is held fully transparent after mount, so the page's own
+ * Reveal duration in ms — how long the circle of light takes to expand from the
+ * centre of the plane out past the far corners of the grid.
+ */
+const ENTRANCE_MS = 1600
+/**
+ * Width of the reveal front's soft edge, in world units. This is what an
+ * individual dot fades over, so it sets both how gradual one dot's fade-up is
+ * and how blurry the expanding ring of light looks. The lattice is ~2.3 units
+ * deep, for scale. 0 would snap dots on instantly.
+ */
+const REVEAL_SOFT = 1.2
+/**
+ * How long the grid is held fully transparent after mount, so the page's own
  * entrance lands first. The nav's FadeIn ladder starts at 1000/1100/1200ms and
  * each item runs a 900ms transition, so the last settles around 2100ms.
  * Overridable per-instance via the `delay` prop.
  *
- * WebGPU still initialises immediately during the wait — only the reveal is
- * deferred — so the grow-in starts on an already-warm device.
+ * WebGPU still initialises immediately during the wait — only the entrance is
+ * deferred — so the reveal starts on an already-warm device.
  */
 const ENTRANCE_DELAY_MS = 1400
+
 /**
- * Exponent of the vertical brightness/alpha decay across the band. >1 pulls the
- * glow up toward the top edge; it reaches 0 at the bottom either way.
+ * Pitch of the plane, in radians. 0 would be a wall facing the camera; pi/2 a
+ * floor seen edge-on. ~66deg gives a table receding to a horizon near the top
+ * of the band, which is what makes the wave's lift read as parallax.
  */
-const FALLOFF_POW = 3
-/** How bright the left/right screen edges stay (0 = fully dark, 1 = no dimming). */
+const TILT = 1.36
+/**
+ * Distance from the camera to the centre of the plane. Smaller means a wider
+ * field of view and a stronger near/far size difference. Must stay comfortably
+ * above `sin(TILT) * GRID_OVERSCAN`, or the near rows pass behind the camera.
+ */
+const CAM_DIST = 2
+/** Number of dot rows from the near edge to the far edge. Sets the density. */
+const ROWS = 50
+/**
+ * How far the lattice extends past the edges of the band. The projection is
+ * solved so the plane's +-1 depth edges land exactly on the top and bottom of
+ * the canvas, so anything over 1 is margin that keeps those edges off-screen.
+ */
+const GRID_OVERSCAN = 1.15
+/**
+ * Dot radius as a fraction of the lattice spacing (0.5 would make dots touch).
+ *
+ * Tuned for small dots against the rest of the current setup. The rows that
+ * actually survive FALLOFF_POW run from the near edge back to about gz -0.2;
+ * across that band 0.035 puts every dot between ~1.8 and ~0.9 css px of radius,
+ * so on a 2x display even the faintest visible dot still covers a device pixel
+ * or more. Going smaller does not make the grid finer, it just pushes the back
+ * of the visible band under a pixel, where dots stop being discs and turn into
+ * alpha haze. Going bigger costs the airiness — the nearest rows are 17.7px
+ * apart on screen and 0.035 makes a 3.6px dot, a comfortable 20% of that.
+ */
+const DOT_SIZE = 0.035
+/**
+ * Floor on a dot's drawn radius, in *device* pixels.
+ *
+ * A disc under about a pixel is a coin toss for the rasteriser, so a drifting
+ * field of them scintillates. Dots smaller than this are drawn at this size and
+ * dimmed by the area they lost, which trades the twinkle for a smooth fade.
+ * With MAX_DPR 2 this mostly bites on non-retina displays and on the far haze.
+ */
+const MIN_DOT_PX = 0.75
+/** Hard cap on instance count, so an ultrawide window cannot explode the draw. */
+const MAX_DOTS = 25000
+
+/**
+ * How fast crests travel outward, in world units per second. Together with
+ * WAVE_LENGTH this sets the cycle time a dot experiences: length / speed, so
+ * 3.4 / 0.2 is a ~17s swell.
+ */
+const WAVE_SPEED = 0.2
+/**
+ * Distance between successive crests, in world units. Your grid reaches a
+ * radius of ~2.9, so at 3.4 rather less than a full cycle is visible at once:
+ * one long swell rolling through, which is what keeps it smooth. Shortening
+ * this is what turns it back into a busy field of ripples.
+ */
+const WAVE_LENGTH = 3.4
+/**
+ * Peak displacement along the plane normal, in world units. The cosine is
+ * signed, so a dot swings this far *either side* of the plane — half the old
+ * one-sided torus value gives the same total travel. At the current tilt this
+ * is roughly +-23px on screen.
+ */
+const WAVE_AMP = 0.05
+/** Exponential decay with radius, so the swell flattens toward the edges. */
+const WAVE_DECAY = 0.18
+
+/**
+ * Exponent of the fade toward the top of the band. >1 keeps the near rows solid
+ * and dissolves the horizon, where the lattice would otherwise pile up into a
+ * hard bar. Raised alongside INTENSITY: the boost lifts the whole curve, so the
+ * exponent has to bite harder for the horizon to still disappear.
+ */
+const FALLOFF_POW = 2.2
+/** Height of the fade at the very bottom edge, in 0..1 of the band. */
+const BOTTOM_FADE = 0.1
+/** How bright the left/right screen edges stay (0 = fully faded, 1 = no mask). */
 const SIDE_MIN = 0
-/** Exponent of the horizontal decay. >1 tightens the glow toward the centre. */
+/** Exponent of the horizontal decay. >1 tightens the grid toward the centre. */
 const SIDE_POW = 2.2
-/** Overall glow brightness, 0..1. Turn down if the bloom is too hot. */
-const GLOW_INTENSITY = 0.8
-/** Grain cell size in CSS px. 1 is per-pixel grain; higher is chunkier. */
-const NOISE_SCALE = 0.2
-/** Grain strength, 0 (off) .. 1 (heavy). */
-const NOISE_AMOUNT = 0
-/** Blue-green tint blended into the darker end of the gradient, 0..1. */
-const TINT_AMOUNT = 2
-/** How sharply the tint ramps in toward the dark end. Higher = more confined. */
-const TINT_POW = 1
-/** Diagonal sheen orientation, in radians. */
-const SHEEN_ANGLE = 2.2
-/** Diagonal sheen spatial frequency — how many soft ridges cross the band. */
-const SHEEN_FREQ = 1.8
-/** Diagonal sheen drift speed. Small = slow. */
-const SHEEN_SPEED = 0.12
-/** How dark the sheen's troughs get, 0 (deep) .. 1 (no sheen). */
-const SHEEN_MIN = 0.45
-/** Diagonal sheen contrast exponent. Higher = tighter bright ridge. */
-const SHEEN_POW = 1.6
-/** Sheen phase used when the visitor prefers reduced motion (frozen frame). */
+/**
+ * Dot brightness. Values above 1 are the point of this knob, not a mistake:
+ * alpha is clamped, so raising it widens the region that reaches *full* white
+ * instead of making anything brighter than white.
+ *
+ * The depth falloffs multiply together, so without a boost a dot halfway up the
+ * band sits near 10% alpha — and 10% white over a dark page is grey, whatever
+ * colour the dot nominally is. At 3, the lower half of the band saturates to
+ * solid white and the falloff only bites over the top half. The screen-edge,
+ * bottom-edge and reveal masks are applied after the clamp, so they are
+ * untouched by this.
+ */
+const INTENSITY = 3
+/**
+ * Alpha of the furthest row relative to the nearest, 0..1. Depth used to be a
+ * colour ramp toward a mid grey, which is exactly what stopped the dots reading
+ * as white; it is carried by alpha instead. 1 makes the grid perfectly flat in
+ * tone, 0 fades the far rows out entirely.
+ */
+const FAR_DIM = 0.7
+/** Extra brightness on dots riding a crest. 0 makes the wave pure geometry. */
+const CREST_BOOST = 0.9
+/**
+ * Wave phase used when the visitor prefers reduced motion (frozen frame). The
+ * wave is fully formed at every moment, so this only picks which instant of the
+ * swell the still is frozen on.
+ */
 const FROZEN_TIME = 6
 /**
- * Device-pixel-ratio cap. A smooth gradient carries no high-frequency detail,
- * so 2x is plenty and keeps the fragment count down on this short band.
+ * Device-pixel-ratio cap. The dots are antialiased analytically in the fragment
+ * shader, so 2x is plenty and keeps the fragment count down on this short band.
  */
 const MAX_DPR = 2
 
 /**
+ * Camera and lattice values derived from the constants above plus the current
+ * aspect ratio.
+ *
+ * `focal` and `camY` are not tuned by hand — they are solved so the plane's
+ * near edge (depth -1) lands on the bottom of the band and its far edge
+ * (depth +1) on the top, whatever TILT and CAM_DIST are. Writing
+ * `ndcY = focal * (camY + d * cos t) / (camDist + d * sin t)` for d = -1 and
+ * d = +1 and asking for -1 and +1 gives focal = camDist / cos t and
+ * camY = sin t * cos t / camDist. That means TILT can be changed freely without
+ * the grid sliding out of the band.
+ */
+function geometry(aspect: number) {
+  const ct = Math.cos(TILT)
+  const st = Math.sin(TILT)
+  const focal = CAM_DIST / ct
+  const camY = (st * ct) / CAM_DIST
+  const halfD = GRID_OVERSCAN
+  const spacing = (2 * halfD) / (ROWS - 1)
+  // The far row is the widest thing on screen, so size the lattice to cover it.
+  const halfW =
+    ((aspect * ct * (CAM_DIST + st * halfD)) / CAM_DIST) * GRID_OVERSCAN
+  const cols = Math.max(
+    2,
+    Math.min(Math.floor(MAX_DOTS / ROWS), Math.floor((2 * halfW) / spacing) + 1)
+  )
+  return {
+    focal,
+    camY,
+    halfD,
+    spacing,
+    cols,
+    instances: cols * ROWS,
+    // Radius that covers the whole lattice — the light-up front sweeps to it.
+    maxR: Math.hypot(((cols - 1) * spacing) / 2, halfD),
+  }
+}
+
+/**
  * Whether the page is in dark mode — next-themes toggles `.dark` on <html>.
- * Drives the gradient direction: brightest stop at the top on dark, darkest at
- * the top on light.
+ * Picks the dot ink: white on dark backgrounds, near-black on light ones.
  */
 function isDark(): boolean {
   return document.documentElement.classList.contains("dark")
@@ -71,7 +197,7 @@ export function HeroGradient({
   delay = ENTRANCE_DELAY_MS,
 }: {
   className?: string
-  /** ms to wait after mount before the band starts unfurling. */
+  /** ms to wait after mount before the grid starts sweeping in. */
   delay?: number
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
@@ -121,9 +247,9 @@ export function HeroGradient({
       else cleanups.push(fn)
     }
 
-    // Hold the reveal until the page's own entrance has landed. Resetting
-    // `start` re-baselines the unfurl clock to this moment, so the band always
-    // gets its full ENTRANCE_MS regardless of how long the wait was.
+    // Hold the entrance until the page's own has landed. Resetting `start`
+    // re-baselines the clock to this moment, so the grid always gets its full
+    // ENTRANCE_MS regardless of how long the wait was.
     const armTimer = window.setTimeout(
       () => {
         if (disposed) return
@@ -149,8 +275,8 @@ export function HeroGradient({
       if (!context) return
 
       const format = navigator.gpu.getPreferredCanvasFormat()
-      // Premultiplied so the alpha tail composites over whatever the page
-      // background is, in either theme, rather than over opaque black.
+      // Premultiplied so the dots composite over whatever the page background
+      // is, in either theme, rather than over opaque black.
       context.configure({ device: dev, format, alphaMode: "premultiplied" })
 
       const shaderModule = dev.createShaderModule({ code: shaderSource })
@@ -176,7 +302,9 @@ export function HeroGradient({
             },
           ],
         },
-        primitive: { topology: "triangle-list" },
+        // One quad per dot, expanded from four corners in the vertex shader.
+        // No cull mode is set, so the strip's winding does not matter.
+        primitive: { topology: "triangle-strip" },
       })
 
       const uniformBuffer = dev.createBuffer({
@@ -199,7 +327,7 @@ export function HeroGradient({
       //
       // DPR is tracked here too, not read once at init: dragging the window to
       // a display with a different pixel ratio has to resize the drawing buffer,
-      // or the gradient renders at the wrong resolution.
+      // or the grid renders at the wrong resolution.
       const syncSize = (): boolean => {
         const rect = root.getBoundingClientRect()
         const w = Math.max(1, Math.round(rect.width))
@@ -223,35 +351,52 @@ export function HeroGradient({
         if (!state.start) state.start = nowMs
         const elapsed = (nowMs - state.start) / 1000
 
-        // Before arming this is 0, which collapses the band's depth to nothing —
-        // the pass still runs, but paints nothing.
-        const entrance = !state.armed
-          ? 0
-          : state.reduced
-            ? 1
-            : 1 - Math.pow(1 - Math.min(1, (elapsed * 1000) / ENTRANCE_MS), 3)
+        // Before arming both phases sit at 0, which collapses the light-up
+        // front to nothing — the pass still runs, but paints nothing.
+        //
+        // Eased out, so the circle of light leaves the centre quickly and
+        // decelerates as it reaches the corners.
+        const elapsedMs = state.armed ? elapsed * 1000 : 0
+        const reveal = state.reduced
+          ? 1
+          : 1 - Math.pow(1 - Math.min(1, elapsedMs / ENTRANCE_MS), 3)
+
+
+        // The lattice is re-derived per frame because it depends on the aspect
+        // ratio: a wider window needs more columns to reach the screen edges.
+        const aspect = canvas.width / Math.max(canvas.height, 1)
+        const g = geometry(aspect)
 
         f32[0] = canvas.width
         f32[1] = canvas.height
-        f32[2] = state.reduced ? FROZEN_TIME : elapsed
-        f32[3] = entrance
-        // Full band depth: the glow reaches 0 exactly at the bottom edge at any
-        // viewport size, so it can never be clipped.
-        f32[4] = canvas.height
-        f32[5] = state.dark ? 0 : 1
-        f32[6] = FALLOFF_POW
-        f32[7] = SIDE_MIN
-        f32[8] = SIDE_POW
-        f32[9] = NOISE_SCALE * state.dpr
-        f32[10] = NOISE_AMOUNT
-        f32[11] = GLOW_INTENSITY
-        f32[12] = TINT_AMOUNT
-        f32[13] = TINT_POW
-        f32[14] = SHEEN_ANGLE
-        f32[15] = SHEEN_FREQ
-        f32[16] = SHEEN_SPEED
-        f32[17] = SHEEN_MIN
-        f32[18] = SHEEN_POW
+        // The wave shares the entrance clock and runs from the first frame, so
+        // every dot is already at its wave height before the reveal lights it.
+        f32[2] = state.reduced ? FROZEN_TIME : elapsedMs / 1000
+        f32[3] = reveal
+        f32[4] = aspect
+        f32[5] = TILT
+        f32[6] = CAM_DIST
+        f32[7] = g.camY
+        f32[8] = g.focal
+        f32[9] = g.cols
+        f32[10] = g.spacing
+        f32[11] = g.halfD
+        f32[12] = g.spacing * DOT_SIZE
+        f32[13] = MIN_DOT_PX
+        f32[14] = WAVE_SPEED
+        f32[15] = WAVE_LENGTH
+        f32[16] = WAVE_AMP
+        f32[17] = WAVE_DECAY
+        f32[18] = g.maxR
+        f32[19] = REVEAL_SOFT
+        f32[20] = FALLOFF_POW
+        f32[21] = BOTTOM_FADE
+        f32[22] = SIDE_MIN
+        f32[23] = SIDE_POW
+        f32[24] = state.dark ? 0 : 1
+        f32[25] = INTENSITY
+        f32[26] = CREST_BOOST
+        f32[27] = FAR_DIM
         dev.queue.writeBuffer(uniformBuffer, 0, uniforms)
 
         const encoder = dev.createCommandEncoder()
@@ -267,7 +412,7 @@ export function HeroGradient({
         })
         pass.setPipeline(pipeline)
         pass.setBindGroup(0, bindGroup)
-        pass.draw(3)
+        pass.draw(4, g.instances)
         pass.end()
         dev.queue.submit([encoder.finish()])
 
@@ -282,7 +427,7 @@ export function HeroGradient({
       }
       state.redraw = drawOnce
 
-      // The sheen drifts continuously, so the loop runs for as long as the band
+      // The rings travel continuously, so the loop runs for as long as the band
       // is on screen (the IntersectionObserver below stops it once scrolled
       // past). Reduced motion draws a single frozen frame instead.
       const loop = (now: number) => {
@@ -305,9 +450,9 @@ export function HeroGradient({
         frame = 0
       }
 
-      // Once the grow-in has settled (or under reduced motion) there is no frame
-      // loop running, so a resize has to trigger its own redraw. While the loop
-      // is live it picks the new size up on its own.
+      // Under reduced motion there is no frame loop running, so a resize has to
+      // trigger its own redraw. While the loop is live it picks the new size up
+      // on its own.
       const resizeObserver = new ResizeObserver(() => {
         if (disposed) return
         if (syncSize() && !frame) drawOnce()
@@ -315,7 +460,7 @@ export function HeroGradient({
       resizeObserver.observe(root)
       registerCleanup(() => resizeObserver.disconnect())
 
-      // The band is only ~300px tall and scrolls away immediately; without this
+      // The band is only ~200px tall and scrolls away immediately; without this
       // the shader would keep burning GPU behind the entire work history.
       const io = new IntersectionObserver(
         ([entry]) => {
@@ -340,7 +485,7 @@ export function HeroGradient({
         document.removeEventListener("visibilitychange", onVisibility)
       )
 
-      // next-themes toggles `.dark` on <html>; flip the gradient direction when
+      // next-themes toggles `.dark` on <html>; flip the palette direction when
       // it does.
       const themeObserver = new MutationObserver(() => {
         state.dark = isDark()

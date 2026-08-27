@@ -1,142 +1,301 @@
-// Hero glow — a soft glow blooming from the top-centre of the window. It grows
-// downward as the entrance plays, peaks at the top edge and horizontal centre,
-// and falls off toward the bottom and the left/right screen edges. Over that
-// base envelope a slow, low-frequency diagonal "sheen" drifts across, so the
-// light reads like a soft caustic streak rather than a static bloom. A fine
-// per-pixel grain adds texture.
+// Hero dot grid — a lattice of dots lying on a plane that is pitched back away
+// from the camera, so it recedes toward a horizon at the top of the band: near
+// rows read large and widely spaced, far rows small and dense.
 //
-// The palette (dark -> mid -> light) is fixed. Only its *direction* swaps with
-// the theme: on dark backgrounds the brightest stop sits at the top (a light
-// glow fading into the dark page); on light backgrounds the darkest stop sits
-// at the top (a dark wash fading into the light page).
+// A long, low radial cosine runs outward from the centre of the plane, lifting
+// the dots it passes along the plane's normal — so the wave is visible as real
+// parallax, not just a brightness pulse. It is a single continuous sinusoid
+// rather than a train of discrete crests, so dots rise and fall through it
+// without any edge to cross: at a wavelength longer than the grid is deep,
+// neighbouring rows are only ever a few degrees of phase apart.
+//
+// The entrance is alpha and nothing else. Dots never move: they sit in their
+// lattice cells, already displaced to their place on the wave, and simply light
+// up as a circular front expands from the centre of the plane out past the
+// corners. The wave is running at full amplitude the whole time, including
+// before anything is visible — so a dot is already at the right height, moving
+// at the right speed, at the instant it becomes visible. Easing the wave in
+// after the reveal instead would pick up dots that had already lit and shove
+// them off the plane, which is exactly the transition there is no way to hide.
+//
+// Two masks from the original glow survive: dots fade toward the left/right
+// screen edges, and they fade toward the top of the band (which hides the
+// horizon line, where the lattice would otherwise collapse into a hard bar).
+//
+// Dots are a single flat colour — white on dark backgrounds, near-black on
+// light ones. Depth is carried entirely by alpha rather than by a colour ramp:
+// ramping toward a mid stop is what makes a white dot read as grey, so the far
+// rows just get thinner instead.
+//
+// Geometry is one instanced quad per dot. Everything — grid placement, the
+// wave, the projection, the masks — happens in the vertex shader, so the
+// fragment shader only has to draw an antialiased disc.
 
 struct Uniforms {
   // Canvas size in device pixels.
   resolution : vec2f,
-  // Seconds since the entrance armed. Drives the sheen drift.
+  // Seconds since the entrance armed. The wave runs off this from the very
+  // first frame, reveal or no reveal.
   time : f32,
-  // Entrance progress, 0 -> 1. Scales the band's depth so it unfurls downward.
-  entrance : f32,
-  // Full band depth in device pixels (the height at entrance == 1).
-  depthMax : f32,
-  // 0 = brightest stop at the top (dark theme), 1 = darkest at the top (light).
-  flip : f32,
-  // Exponent of the vertical decay. >1 pulls the glow up toward the top edge.
+  // Reveal progress, 0 -> 1. Drives the radius of the light-up front.
+  reveal : f32,
+  // Canvas width / height.
+  aspect : f32,
+
+  // --- camera ------------------------------------------------------------
+  // Pitch of the plane, in radians. 0 = a wall facing the camera; pi/2 = a
+  // floor seen edge-on. Values near 1.1-1.3 give a strong receding table.
+  tilt : f32,
+  // Distance from the camera to the centre of the plane, along view Z.
+  // Smaller = wider FOV = stronger perspective.
+  camDist : f32,
+  // Height of the plane's centre in view space. Solved on the CPU together
+  // with `focal` so the plane's near and far edges land exactly on the bottom
+  // and top of the band at any tilt.
+  camY : f32,
+  // Perspective focal length (NDC units per world unit at unit depth).
+  focal : f32,
+
+  // --- lattice -----------------------------------------------------------
+  // Dots per row. The instance index is decomposed against this.
+  cols : f32,
+  // Distance between neighbouring dots, in world units. Uniform in both axes,
+  // so the lattice is square on the plane and only perspective makes the far
+  // rows look tighter.
+  spacing : f32,
+  // Half-extent of the lattice along the plane's depth axis. The projection is
+  // solved for +-1, so anything past that is deliberate overscan.
+  halfD : f32,
+  // Dot radius in world units (at the plane, before perspective).
+  dotRadius : f32,
+  // Floor on a dot's drawn radius, in device pixels. See the note in the vertex
+  // shader — below about a pixel a disc cannot be rasterised honestly, so it is
+  // held at this size and paid for in alpha instead.
+  dotMinPx : f32,
+
+  // --- wave --------------------------------------------------------------
+  // How fast crests travel outward, world units per second.
+  waveSpeed : f32,
+  // Distance between successive crests. Longer than the lattice is deep means
+  // the whole visible grid is well under one full cycle apart in phase, which
+  // is what makes the motion read as one slow swell instead of ripples.
+  waveLength : f32,
+  // Peak lift along the plane normal, in world units.
+  waveAmp : f32,
+  // Exponential decay of the lift with radius, so rings flatten out as they
+  // reach the edges of the lattice rather than marching on at full height.
+  waveDecay : f32,
+
+  // --- entrance ----------------------------------------------------------
+  // Radius that fully covers the lattice; the light-up front sweeps 0 -> this.
+  maxR : f32,
+  // Width of the front's soft edge, in world units. This is what each dot
+  // actually fades over — a wider edge means a longer, gentler individual
+  // fade-up and a blurrier ring of light; 0 would switch dots on instantly.
+  revealSoft : f32,
+
+  // --- masks -------------------------------------------------------------
+  // Exponent of the fade toward the top of the band. >1 keeps the near rows
+  // solid and dissolves the horizon quickly.
   falloffPow : f32,
-  // How bright the left/right screen edges stay (0 = fully dark).
+  // Height of the fade at the very bottom edge, in 0..1 of the band, so the
+  // lattice does not end on a hard cut.
+  bottomFade : f32,
+  // How bright the left/right screen edges stay (0 = fully faded out).
   sideMin : f32,
-  // Exponent of the horizontal decay. >1 tightens the glow toward the centre.
+  // Exponent of the horizontal decay. >1 tightens the grid toward the centre.
   sidePow : f32,
-  // Grain cell size in device pixels. 1 is per-pixel grain; larger is chunkier.
-  noiseScale : f32,
-  // Grain strength, 0 (off) .. 1 (heavy).
-  noiseAmount : f32,
-  // Overall glow brightness multiplier.
-  glowIntensity : f32,
-  // Strength of the blue-green tint blended into the darker end, 0..1.
-  tintAmount : f32,
-  // How sharply the tint ramps in toward the dark end.
-  tintPow : f32,
-  // Diagonal sheen: orientation in radians.
-  sheenAngle : f32,
-  // Diagonal sheen: spatial frequency (soft ridges across the band).
-  sheenFreq : f32,
-  // Diagonal sheen: drift speed.
-  sheenSpeed : f32,
-  // Diagonal sheen: floor in its darkest trough, 0..1.
-  sheenMin : f32,
-  // Diagonal sheen: contrast exponent.
-  sheenPow : f32,
-  _pad : f32,
+
+  // --- shading -----------------------------------------------------------
+  // 0 = white dots (dark theme), 1 = near-black dots (light theme).
+  flip : f32,
+  // Dot brightness multiplier. Deliberately allowed above 1: the result is
+  // clamped, so anything over 1 widens the region that reaches *full* white
+  // rather than making it brighter. This is the knob that stops the grid
+  // reading as grey — with several falloffs multiplied together, an unboosted
+  // dot mid-band lands near 10% alpha, and 10% white over a dark page is grey.
+  intensity : f32,
+  // Extra brightness on dots riding a ring crest, 0 = none.
+  crestBoost : f32,
+  // Alpha of the furthest row relative to the nearest, 0..1. This is what used
+  // to be a colour ramp toward the palette's dark stop.
+  farDim : f32,
+
+  _p0 : f32,
+  _p1 : f32,
+  _p2 : f32,
+  _p3 : f32,
 };
 
 @group(0) @binding(0) var<uniform> U : Uniforms;
 
-// Palette in sRGB 0..1, written straight to the (non-sRGB) canvas.
-const C0 : vec3f = vec3f(0.054902, 0.098039, 0.117647); // #0E191E
-const C1 : vec3f = vec3f(0.733333, 0.788235, 0.780392); // #BBC9C7
-const C2 : vec3f = vec3f(0.874510, 0.917647, 0.909804); // #DFEAE8
-// Blue-green hue push, roughly luminance-preserving (its own luminance ~1), so
-// tinting shifts hue rather than brightness. Red is cut, green/blue lifted.
-const TINT_BIAS : vec3f = vec3f(0.55, 1.08, 1.05);
+// Dot colours in sRGB 0..1, written straight to the (non-sRGB) canvas.
+// Pure white on dark backgrounds; the palette's darkest stop on light ones.
+const DOT_ON_DARK : vec3f = vec3f(1.0, 1.0, 1.0);
+const DOT_ON_LIGHT : vec3f = vec3f(0.054902, 0.098039, 0.117647); // #0E191E
+
+const TAU : f32 = 6.2831853;
+
+struct VSOut {
+  @builtin(position) pos : vec4f,
+  // Position within the dot's quad, -1..1 on both axes. The disc is carved
+  // out of this in the fragment shader.
+  @location(0) uv : vec2f,
+  @location(1) colour : vec3f,
+  @location(2) alpha : f32,
+  // Width of the antialiased rim, in uv units. Derived from the dot's on-screen
+  // radius so far (tiny) dots stay soft instead of aliasing into flicker.
+  @location(3) edge : f32,
+};
+
+// Displacement of the radial wave at radius `r`, -1..1.
+//
+// A plain travelling sinusoid: phase advances with time and retreats with
+// radius, so crests move outward at waveSpeed. Being one continuous curve, it
+// has no rim, no seam and no discrete rings — every dot is always somewhere on
+// a smooth slope.
+//
+// It has no envelope and no leading edge: the wave is fully formed everywhere,
+// at every moment, from the first frame. That is what makes the entrance
+// seamless — the reveal only decides which dots you can *see*, never where they
+// are, so nothing is ever in the wrong place when it appears.
+//
+// It is signed, so dots dip below the plane as well as rise above it.
+fn radialWave(r : f32) -> f32 {
+  let phase = (U.time * U.waveSpeed - r) * TAU / max(U.waveLength, 1e-4);
+  return sin(phase);
+}
 
 @vertex
-fn vs(@builtin(vertex_index) i : u32) -> @builtin(position) vec4f {
-  // Single oversized triangle covering the clip volume.
-  var p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
-  return vec4f(p[i], 0.0, 1.0);
-}
+fn vs(
+  @builtin(vertex_index) vi : u32,
+  @builtin(instance_index) ii : u32,
+) -> VSOut {
+  // --- lattice placement -------------------------------------------------
+  // Instances are laid out far row first, so nearer dots are drawn later and
+  // win the overlap. There is no depth buffer; draw order is the sort.
+  let cols = max(u32(U.cols), 1u);
+  let ix = f32(ii % cols);
+  let iz = f32(ii / cols);
+  let gx = (ix - (U.cols - 1.0) * 0.5) * U.spacing;
+  let gz = U.halfD - iz * U.spacing;
 
-// White-noise hash, 0..1. Independent per input cell, which is what makes the
-// grain read as grain rather than smooth cloud.
-fn hash2(p : vec2f) -> f32 {
-  var p3 = fract(vec3f(p.x, p.y, p.x) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
-}
+  // Radius from the centre of the plane, measured on the plane itself — so the
+  // rings are true circles in world space and perspective is what turns them
+  // into the ellipses you actually see.
+  let r = length(vec2f(gx, gz));
 
-// Smooth 3-stop ramp: t 0 -> C0, 0.5 -> C1, 1 -> C2.
-fn ramp3(t : f32) -> vec3f {
-  let x = clamp(t, 0.0, 1.0) * 2.0;
-  if (x < 1.0) {
-    return mix(C0, C1, smoothstep(0.0, 1.0, x));
-  }
-  return mix(C1, C2, smoothstep(0.0, 1.0, x - 1.0));
+  // --- entrance ----------------------------------------------------------
+  // A circular front of light expanding from the centre of the plane. The dot
+  // is already sitting at its wave height before this front ever reaches it —
+  // only its alpha moves, never its position. The
+  // front is driven past maxR by the soft edge's own width, so the last dots in
+  // the corners finish fading up rather than being caught mid-way at reveal 1.
+  let front = U.reveal * (U.maxR + U.revealSoft);
+  let appear = 1.0 - smoothstep(front - U.revealSoft, front, r);
+
+  // --- wave --------------------------------------------------------------
+  let wave = radialWave(r) * exp(-r * U.waveDecay);
+  let lift = wave * U.waveAmp;
+
+  // --- plane basis -------------------------------------------------------
+  // The plane is pitched about X. At tilt 0 it is a wall in XY with its normal
+  // pointing at the camera; as tilt grows it tips away into a floor, and the
+  // normal swings upward — which is exactly why the lift becomes visible as
+  // vertical parallax rather than as pure scale.
+  let ct = cos(U.tilt);
+  let st = sin(U.tilt);
+  let tangent = vec3f(1.0, 0.0, 0.0);
+  let bitangent = vec3f(0.0, ct, st);
+  let normal = vec3f(0.0, st, -ct);
+  let centre = vec3f(0.0, U.camY, U.camDist);
+  let world = centre + tangent * gx + bitangent * gz + normal * lift;
+
+  // --- projection --------------------------------------------------------
+  // Camera sits at the origin looking down +Z. Clamped so a dot that gets
+  // lifted past the camera plane collapses instead of wrapping around.
+  let vz = max(world.z, 0.05);
+  let scale = U.focal / vz;
+  let ndc = vec2f(world.x * scale / U.aspect, world.y * scale);
+
+  // Perspective-correct dot size: the same world radius covers fewer pixels
+  // the further away it is, which is what sells the recession.
+  let rY = U.dotRadius * scale;
+
+  // Radius the dot wants, in device pixels, and the radius it will actually be
+  // drawn at.
+  //
+  // Below roughly a pixel a disc cannot be rasterised honestly: whether it
+  // happens to cover a sample point is luck, so as the grid drifts a field of
+  // sub-pixel dots scintillates, individual dots blinking in and out. Holding
+  // the quad at a floor and paying for the extra size with alpha — in
+  // proportion to the area the dot should have had — keeps each dot's total ink
+  // correct while giving the rasteriser something it can resolve. The far rows
+  // then fade smoothly into haze instead of sparkling.
+  let wantPx = max(rY * 0.5 * U.resolution.y, 1e-4);
+  let drawPx = max(wantPx, U.dotMinPx);
+  let shrink = wantPx / drawPx;
+  let sizeAlpha = shrink * shrink;
+
+  let rD = rY * (drawPx / wantPx);
+  let corner = vec2f(f32(vi & 1u), f32((vi >> 1u) & 1u)) * 2.0 - 1.0;
+
+  // --- masks -------------------------------------------------------------
+  // Horizontal: measured in screen space, so it tracks the window edges rather
+  // than the lattice, and stays put as the plane's world extent changes.
+  let sx = clamp(abs(ndc.x), 0.0, 1.0);
+  let side = mix(U.sideMin, 1.0, pow(1.0 - sx, U.sidePow));
+
+  // Vertical: 1 at the top of the band, 0 at the bottom.
+  let topness = clamp(ndc.y * 0.5 + 0.5, 0.0, 1.0);
+  let depthFade = pow(1.0 - topness, U.falloffPow);
+  let bottomEdge = smoothstep(0.0, max(U.bottomFade, 1e-4), topness);
+
+  // --- shading -----------------------------------------------------------
+  // Flat colour, so a dot is the full ink of the theme and never a blend
+  // toward some mid grey. Every falloff below acts on alpha instead, which
+  // over a premultiplied composite is what keeps near dots reading as white.
+  let colour = mix(DOT_ON_DARK, DOT_ON_LIGHT, U.flip);
+
+  // 0 on the near edge, 1 on the far edge — thins the far rows.
+  let depthT = clamp((U.halfD - gz) / max(2.0 * U.halfD, 1e-4), 0.0, 1.0);
+  let depthDim = mix(1.0, U.farDim, depthT);
+
+  // Only the two *depth* terms are boosted and clamped. They are a tonal
+  // gradient, so saturating them is what turns the grid white; the crest rides
+  // along because a lit dot cannot get whiter than white. Only the wave's
+  // positive half brightens — troughs are dips, not shadows.
+  let core = clamp(
+    U.intensity * depthFade * depthDim * (1.0 + max(wave, 0.0) * U.crestBoost),
+    0.0,
+    1.0
+  );
+
+  // The three envelopes stay outside the boost, so each still covers its full
+  // 0..1 range. Folding them in would scale their soft edges down by the boost
+  // factor: the screen-edge mask would stop reaching 0 and start showing dots
+  // at the window edges, and the reveal front's soft edge would compress to a
+  // third of its width and snap dots on.
+  let alpha = core * side * bottomEdge * appear * sizeAlpha;
+
+  var out : VSOut;
+  out.pos = vec4f(ndc + corner * vec2f(rD / U.aspect, rD), 0.0, 1.0);
+  out.uv = corner;
+  out.colour = colour;
+  out.alpha = alpha;
+  // Antialiasing width, taken from the drawn radius so it is roughly one pixel
+  // however far away the dot is. A floored dot ends up at edge 1, i.e. a soft
+  // blob with no hard rim at all — which is the right look at that size.
+  out.edge = clamp(1.0 / drawPx, 0.05, 1.0);
+  return out;
 }
 
 @fragment
-fn fs(@builtin(position) frag : vec4f) -> @location(0) vec4f {
-  // Device pixels, y increasing downward from the top edge of the band.
-  let px = frag.xy;
-
-  // Depth grows from the top edge as the entrance plays, so the glow unfurls
-  // downward rather than fading in flat.
-  let depth = max(U.depthMax * U.entrance, 1.0);
-  // 0 at the top edge, 1 at the bottom of the grown band.
-  let v = clamp(px.y / depth, 0.0, 1.0);
-  // 0..1 across the window width.
-  let u = px.x / max(U.resolution.x, 1.0);
-
-  // Vertical glow profile: brightest at the top, easing to nothing at the
-  // bottom of the grown band.
-  let vert = pow(1.0 - v, U.falloffPow);
-
-  // Horizontal glow profile: brightest at the centre, falling toward the
-  // left/right edges but never below sideMin.
-  let cx = 1.0 - abs(u - 0.5) * 2.0;
-  let horiz = pow(clamp(cx, 0.0, 1.0), U.sidePow);
-  let side = mix(U.sideMin, 1.0, horiz);
-
-  // Diagonal sheen: soft light/dark ridges along `sheenAngle`, drifting slowly
-  // with time. Two offset waves keep it from reading as a mechanical stripe.
-  // Sampled in aspect-corrected, height-normalised space.
-  let asp = U.resolution.x / max(U.resolution.y, 1.0);
-  let p = vec2f(u * asp, px.y / max(U.resolution.y, 1.0));
-  let d = p.x * cos(U.sheenAngle) + p.y * sin(U.sheenAngle);
-  let s1 = sin(d * U.sheenFreq - U.time * U.sheenSpeed);
-  let s2 = sin(d * U.sheenFreq * 0.6 + U.time * U.sheenSpeed * 0.7 + 1.3);
-  let wave = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
-  let sheen = mix(U.sheenMin, 1.0, pow(wave, U.sheenPow));
-
-  // Grain: an independent random value per grain cell, centred on 1 so it
-  // lightens and darkens the glow in equal measure.
-  let g = hash2(floor(px / max(U.noiseScale, 1.0)));
-  let tex = 1.0 + (g - 0.5) * U.noiseAmount;
-
-  // Colour position along the palette — brightest stop at the top on dark
-  // themes, darkest at the top on light ones.
-  let t = mix(1.0 - v, v, U.flip);
-  var col = ramp3(t);
-
-  // Push a blue-green tint into the darker end of the ramp (t -> 0), preserving
-  // luminance so it reads as a hue shift rather than a brightness change.
-  let tintW = pow(1.0 - t, U.tintPow) * U.tintAmount;
-  let lum = dot(col, vec3f(0.2126, 0.7152, 0.0722));
-  col = mix(col, lum * TINT_BIAS, tintW);
-
-  // Premultiplied — the glow's own profile is its alpha, so it composites over
-  // the page background and fades into it toward the bottom and edges.
-  let alpha =
-    clamp(vert * side * sheen * U.glowIntensity * tex, 0.0, 1.0);
-  return vec4f(col * alpha, alpha);
+fn fs(in : VSOut) -> @location(0) vec4f {
+  let d = length(in.uv);
+  let disc = 1.0 - smoothstep(1.0 - in.edge, 1.0, d);
+  // Premultiplied — the dots composite over whatever the page background is,
+  // in either theme, rather than over opaque black.
+  let a = in.alpha * disc;
+  return vec4f(in.colour * a, a);
 }
