@@ -9,17 +9,20 @@ import "./hero-gradient.css"
 /** Uniform buffer: 32 * f32 = 128 bytes (multiple of 16). */
 const UNIFORM_BYTES = 128
 /**
- * Reveal duration in ms — how long the circle of light takes to expand from the
- * centre of the plane out past the far corners of the grid.
+ * Reveal duration in ms — how long the front takes to sweep from the row
+ * closest to the camera back past the furthest one.
  */
-const ENTRANCE_MS = 1600
+const ENTRANCE_MS = 750
 /**
- * Width of the reveal front's soft edge, in world units. This is what an
- * individual dot fades over, so it sets both how gradual one dot's fade-up is
- * and how blurry the expanding ring of light looks. The lattice is ~2.3 units
- * deep, for scale. 0 would snap dots on instantly.
+ * Width of the reveal front's soft edge, as a fraction of the band's height.
+ *
+ * NOTE the units changed with the sweep: this used to be world units against a
+ * ~2.3-deep lattice, and is now a fraction of the band, so the old 2 would be
+ * an edge twice the height of the whole band. 0.5 carries over the same intent
+ * — a generously soft front, half the band deep. At 0 whole rows snap on at
+ * once; 0.2 gives a crisp travelling line.
  */
-const REVEAL_SOFT = 1.2
+const REVEAL_SOFT = 0.5
 /**
  * How long the grid is held fully transparent after mount, so the page's own
  * entrance lands first. The nav's FadeIn ladder starts at 1000/1100/1200ms and
@@ -33,8 +36,8 @@ const ENTRANCE_DELAY_MS = 1400
 
 /**
  * Pitch of the plane, in radians. 0 would be a wall facing the camera; pi/2 a
- * floor seen edge-on. ~66deg gives a table receding to a horizon near the top
- * of the band, which is what makes the wave's lift read as parallax.
+ * plane seen edge-on. The plane falls away *downward* as it recedes, so the
+ * near rows sit at the top of the window and the horizon is below the band.
  */
 const TILT = 1.36
 /**
@@ -81,7 +84,7 @@ const MAX_DOTS = 25000
  * WAVE_LENGTH this sets the cycle time a dot experiences: length / speed, so
  * 3.4 / 0.2 is a ~17s swell.
  */
-const WAVE_SPEED = 0.2
+const WAVE_SPEED = 0.05
 /**
  * Distance between successive crests, in world units. Your grid reaches a
  * radius of ~2.9, so at 3.4 rather less than a full cycle is visible at once:
@@ -100,14 +103,19 @@ const WAVE_AMP = 0.05
 const WAVE_DECAY = 0.18
 
 /**
- * Exponent of the fade toward the top of the band. >1 keeps the near rows solid
- * and dissolves the horizon, where the lattice would otherwise pile up into a
- * hard bar. Raised alongside INTENSITY: the boost lifts the whole curve, so the
- * exponent has to bite harder for the horizon to still disappear.
+ * Exponent of the fade toward the bottom of the band, where the plane falls
+ * away to its horizon. >1 keeps the near rows solid and dissolves the far ones,
+ * which would otherwise pile up into a hard bar. Raised alongside INTENSITY:
+ * the boost lifts the whole curve, so the exponent has to bite harder for the
+ * horizon to still disappear.
  */
 const FALLOFF_POW = 2.2
-/** Height of the fade at the very bottom edge, in 0..1 of the band. */
-const BOTTOM_FADE = 0.1
+/**
+ * Height of the fade at the very top edge, in 0..1 of the band. The near rows
+ * overshoot the band and are clipped there, so this stops them ending on a hard
+ * cut directly under the nav.
+ */
+const EDGE_FADE = 0.1
 /** How bright the left/right screen edges stay (0 = fully faded, 1 = no mask). */
 const SIDE_MIN = 0
 /** Exponent of the horizontal decay. >1 tightens the grid toward the centre. */
@@ -151,18 +159,22 @@ const MAX_DPR = 2
  * aspect ratio.
  *
  * `focal` and `camY` are not tuned by hand — they are solved so the plane's
- * near edge (depth -1) lands on the bottom of the band and its far edge
- * (depth +1) on the top, whatever TILT and CAM_DIST are. Writing
- * `ndcY = focal * (camY + d * cos t) / (camDist + d * sin t)` for d = -1 and
- * d = +1 and asking for -1 and +1 gives focal = camDist / cos t and
- * camY = sin t * cos t / camDist. That means TILT can be changed freely without
- * the grid sliding out of the band.
+ * near edge (depth -1) lands on the *top* of the band and its far edge
+ * (depth +1) on the bottom, whatever TILT and CAM_DIST are. Writing
+ * `ndcY = focal * (camY - d * cos t) / (camDist + d * sin t)` for d = -1 and
+ * d = +1 and asking for +1 and -1 gives focal = camDist / cos t and
+ * camY = -sin t * cos t / camDist. That means TILT can be changed freely
+ * without the grid sliding out of the band.
+ *
+ * The minus signs are what put the near rows at the top: they pair with the
+ * negated bitangent in the shader, which tips the plane downward as it recedes
+ * instead of upward. Flip both together to turn it back into a floor.
  */
 function geometry(aspect: number) {
   const ct = Math.cos(TILT)
   const st = Math.sin(TILT)
   const focal = CAM_DIST / ct
-  const camY = (st * ct) / CAM_DIST
+  const camY = -(st * ct) / CAM_DIST
   const halfD = GRID_OVERSCAN
   const spacing = (2 * halfD) / (ROWS - 1)
   // The far row is the widest thing on screen, so size the lattice to cover it.
@@ -172,6 +184,13 @@ function geometry(aspect: number) {
     2,
     Math.min(Math.floor(MAX_DOTS / ROWS), Math.floor((2 * halfW) / spacing) + 1)
   )
+  // Where a row at plane-depth `gz` lands down the band: 0 at the top, 1 at the
+  // bottom. The reveal sweep is expressed in these units, so it needs the two
+  // ends of the overscanned lattice — which sit outside 0..1 by however much
+  // GRID_OVERSCAN adds.
+  const depthScreen = (gz: number) =>
+    0.5 - ((focal * (camY - gz * ct)) / (CAM_DIST + gz * st)) * 0.5
+
   return {
     focal,
     camY,
@@ -179,8 +198,8 @@ function geometry(aspect: number) {
     spacing,
     cols,
     instances: cols * ROWS,
-    // Radius that covers the whole lattice — the light-up front sweeps to it.
-    maxR: Math.hypot(((cols - 1) * spacing) / 2, halfD),
+    revealFrom: depthScreen(-halfD),
+    revealTo: depthScreen(halfD),
   }
 }
 
@@ -351,16 +370,16 @@ export function HeroGradient({
         if (!state.start) state.start = nowMs
         const elapsed = (nowMs - state.start) / 1000
 
-        // Before arming both phases sit at 0, which collapses the light-up
-        // front to nothing — the pass still runs, but paints nothing.
+        // Before arming this sits at 0, which parks the front short of the
+        // nearest row — the pass still runs, but paints nothing.
         //
-        // Eased out, so the circle of light leaves the centre quickly and
-        // decelerates as it reaches the corners.
+        // Eased in and out rather than out only. A directional sweep wants a
+        // roughly constant rate through the middle; an ease-out front covers
+        // three quarters of the band in the first quarter of the duration and
+        // then crawls, which reads as the reveal finishing early and stalling.
         const elapsedMs = state.armed ? elapsed * 1000 : 0
-        const reveal = state.reduced
-          ? 1
-          : 1 - Math.pow(1 - Math.min(1, elapsedMs / ENTRANCE_MS), 3)
-
+        const rt = Math.min(1, elapsedMs / ENTRANCE_MS)
+        const reveal = state.reduced ? 1 : rt * rt * (3 - 2 * rt)
 
         // The lattice is re-derived per frame because it depends on the aspect
         // ratio: a wider window needs more columns to reach the screen edges.
@@ -387,16 +406,17 @@ export function HeroGradient({
         f32[15] = WAVE_LENGTH
         f32[16] = WAVE_AMP
         f32[17] = WAVE_DECAY
-        f32[18] = g.maxR
-        f32[19] = REVEAL_SOFT
-        f32[20] = FALLOFF_POW
-        f32[21] = BOTTOM_FADE
-        f32[22] = SIDE_MIN
-        f32[23] = SIDE_POW
-        f32[24] = state.dark ? 0 : 1
-        f32[25] = INTENSITY
-        f32[26] = CREST_BOOST
-        f32[27] = FAR_DIM
+        f32[18] = g.revealFrom
+        f32[19] = g.revealTo
+        f32[20] = REVEAL_SOFT
+        f32[21] = FALLOFF_POW
+        f32[22] = EDGE_FADE
+        f32[23] = SIDE_MIN
+        f32[24] = SIDE_POW
+        f32[25] = state.dark ? 0 : 1
+        f32[26] = INTENSITY
+        f32[27] = CREST_BOOST
+        f32[28] = FAR_DIM
         dev.queue.writeBuffer(uniformBuffer, 0, uniforms)
 
         const encoder = dev.createCommandEncoder()

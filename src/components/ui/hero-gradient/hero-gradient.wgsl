@@ -1,6 +1,7 @@
-// Hero dot grid — a lattice of dots lying on a plane that is pitched back away
-// from the camera, so it recedes toward a horizon at the top of the band: near
-// rows read large and widely spaced, far rows small and dense.
+// Hero dot grid — a lattice of dots lying on a plane that is pitched away from
+// the camera and *downward*, so it recedes toward a horizon below the band: the
+// near rows sit at the top of the window, large and widely spaced, and the grid
+// shrinks and tightens as it falls away toward the bottom.
 //
 // A long, low radial cosine runs outward from the centre of the plane, lifting
 // the dots it passes along the plane's normal — so the wave is visible as real
@@ -11,15 +12,15 @@
 //
 // The entrance is alpha and nothing else. Dots never move: they sit in their
 // lattice cells, already displaced to their place on the wave, and simply light
-// up as a circular front expands from the centre of the plane out past the
-// corners. The wave is running at full amplitude the whole time, including
+// up as a front sweeps backwards away from the camera — the nearest rows first,
+// running off toward the horizon. The wave is running at full amplitude the whole time, including
 // before anything is visible — so a dot is already at the right height, moving
 // at the right speed, at the instant it becomes visible. Easing the wave in
 // after the reveal instead would pick up dots that had already lit and shove
 // them off the plane, which is exactly the transition there is no way to hide.
 //
 // Two masks from the original glow survive: dots fade toward the left/right
-// screen edges, and they fade toward the top of the band (which hides the
+// screen edges, and they fade toward the bottom of the band (which hides the
 // horizon line, where the lattice would otherwise collapse into a hard bar).
 //
 // Dots are a single flat colour — white on dark backgrounds, near-black on
@@ -50,8 +51,8 @@ struct Uniforms {
   // Smaller = wider FOV = stronger perspective.
   camDist : f32,
   // Height of the plane's centre in view space. Solved on the CPU together
-  // with `focal` so the plane's near and far edges land exactly on the bottom
-  // and top of the band at any tilt.
+  // with `focal` so the plane's near and far edges land exactly on the top and
+  // bottom of the band at any tilt.
   camY : f32,
   // Perspective focal length (NDC units per world unit at unit depth).
   focal : f32,
@@ -87,20 +88,28 @@ struct Uniforms {
   waveDecay : f32,
 
   // --- entrance ----------------------------------------------------------
-  // Radius that fully covers the lattice; the light-up front sweeps 0 -> this.
-  maxR : f32,
-  // Width of the front's soft edge, in world units. This is what each dot
-  // actually fades over — a wider edge means a longer, gentler individual
-  // fade-up and a blurrier ring of light; 0 would switch dots on instantly.
+  // Where the sweep starts and ends, in the same units as `depthScreen` in the
+  // vertex shader: 0 is the plane's near edge at the top of the band, 1 its far
+  // edge at the bottom, and the overscan rows fall outside that. Solved on the
+  // CPU from the projection so the front always clears both ends of the
+  // lattice, whatever TILT and GRID_OVERSCAN are.
+  revealFrom : f32,
+  revealTo : f32,
+  // Width of the front's soft edge, as a fraction of the band's height. This is
+  // what each dot actually fades over — a wider edge means a longer, gentler
+  // individual fade-up and a softer leading edge; 0 would switch rows on
+  // instantly, a row at a time.
   revealSoft : f32,
 
   // --- masks -------------------------------------------------------------
-  // Exponent of the fade toward the top of the band. >1 keeps the near rows
-  // solid and dissolves the horizon quickly.
+  // Exponent of the fade toward the bottom of the band, where the plane falls
+  // away to its horizon. >1 keeps the near rows solid and dissolves the far
+  // ones quickly.
   falloffPow : f32,
-  // Height of the fade at the very bottom edge, in 0..1 of the band, so the
-  // lattice does not end on a hard cut.
-  bottomFade : f32,
+  // Height of the fade at the very top edge, in 0..1 of the band. The near rows
+  // overshoot the band and are clipped there, so this keeps them from ending on
+  // a hard cut right under the nav.
+  edgeFade : f32,
   // How bright the left/right screen edges stay (0 = fully faded out).
   sideMin : f32,
   // Exponent of the horizontal decay. >1 tightens the grid toward the centre.
@@ -124,7 +133,6 @@ struct Uniforms {
   _p0 : f32,
   _p1 : f32,
   _p2 : f32,
-  _p3 : f32,
 };
 
 @group(0) @binding(0) var<uniform> U : Uniforms;
@@ -185,29 +193,26 @@ fn vs(
   // into the ellipses you actually see.
   let r = length(vec2f(gx, gz));
 
-  // --- entrance ----------------------------------------------------------
-  // A circular front of light expanding from the centre of the plane. The dot
-  // is already sitting at its wave height before this front ever reaches it —
-  // only its alpha moves, never its position. The
-  // front is driven past maxR by the soft edge's own width, so the last dots in
-  // the corners finish fading up rather than being caught mid-way at reveal 1.
-  let front = U.reveal * (U.maxR + U.revealSoft);
-  let appear = 1.0 - smoothstep(front - U.revealSoft, front, r);
-
   // --- wave --------------------------------------------------------------
   let wave = radialWave(r) * exp(-r * U.waveDecay);
   let lift = wave * U.waveAmp;
 
   // --- plane basis -------------------------------------------------------
   // The plane is pitched about X. At tilt 0 it is a wall in XY with its normal
-  // pointing at the camera; as tilt grows it tips away into a floor, and the
-  // normal swings upward — which is exactly why the lift becomes visible as
-  // vertical parallax rather than as pure scale.
+  // pointing at the camera; as tilt grows it tips away into a plane that falls
+  // *downward* as it recedes, and the normal swings downward with it — which is
+  // exactly why the lift becomes visible as vertical parallax rather than as
+  // pure scale.
+  //
+  // The bitangent's negative Y is what puts the near rows at the top of the
+  // window: depth runs down the screen, not up, so the horizon ends up below
+  // the band rather than above it. Flip its sign (and camY's, on the CPU) to
+  // turn the plane back into a floor receding upward.
   let ct = cos(U.tilt);
   let st = sin(U.tilt);
   let tangent = vec3f(1.0, 0.0, 0.0);
-  let bitangent = vec3f(0.0, ct, st);
-  let normal = vec3f(0.0, st, -ct);
+  let bitangent = vec3f(0.0, -ct, st);
+  let normal = vec3f(0.0, -st, -ct);
   let centre = vec3f(0.0, U.camY, U.camDist);
   let world = centre + tangent * gx + bitangent * gz + normal * lift;
 
@@ -246,10 +251,36 @@ fn vs(
   let sx = clamp(abs(ndc.x), 0.0, 1.0);
   let side = mix(U.sideMin, 1.0, pow(1.0 - sx, U.sidePow));
 
-  // Vertical: 1 at the top of the band, 0 at the bottom.
-  let topness = clamp(ndc.y * 0.5 + 0.5, 0.0, 1.0);
-  let depthFade = pow(1.0 - topness, U.falloffPow);
-  let bottomEdge = smoothstep(0.0, max(U.bottomFade, 1e-4), topness);
+  // Vertical position down the plane, taken from the projected result rather
+  // than from gz: 0 at the plane's near edge (the top of the band), 1 at its far
+  // edge (the bottom), and outside that range in the overscan.
+  //
+  // Screen space, not world depth, is what the sweep below wants. Perspective
+  // crushes the far half of the lattice into a sliver, so a front advancing at a
+  // constant rate through world depth would clear everything you can actually
+  // see in the first third of the entrance and then spend the rest crawling
+  // through rows a pixel tall that are already faded to nothing. This is still
+  // strictly depth-ordered — it is a monotonic reparametrisation of gz — so the
+  // reveal really does run from the closest row backwards.
+  let depthScreen = 0.5 - ndc.y * 0.5;
+
+  // 1 at the top of the band, which is the *near* end of the plane, falling to
+  // 0 at the bottom, which is the far end.
+  let nearness = clamp(1.0 - depthScreen, 0.0, 1.0);
+  // Fade toward the far end at the bottom, where the lattice would otherwise
+  // pile up into a hard bar as it approaches the horizon.
+  let depthFade = pow(nearness, U.falloffPow);
+  // Soften the top edge, where the near rows overshoot the band and are clipped.
+  let nearEdge = smoothstep(0.0, max(U.edgeFade, 1e-4), 1.0 - nearness);
+
+  // --- entrance ----------------------------------------------------------
+  // The front runs from just short of the nearest row to a soft edge's width
+  // past the furthest, so every dot both starts fully dark and finishes fully
+  // lit — no row is left caught mid-fade when reveal reaches 1. The dot is
+  // already sitting at its wave height before the front arrives: only its alpha
+  // moves, never its position.
+  let front = mix(U.revealFrom, U.revealTo + U.revealSoft, U.reveal);
+  let appear = 1.0 - smoothstep(front - U.revealSoft, front, depthScreen);
 
   // --- shading -----------------------------------------------------------
   // Flat colour, so a dot is the full ink of the theme and never a blend
@@ -257,8 +288,10 @@ fn vs(
   // over a premultiplied composite is what keeps near dots reading as white.
   let colour = mix(DOT_ON_DARK, DOT_ON_LIGHT, U.flip);
 
-  // 0 on the near edge, 1 on the far edge — thins the far rows.
-  let depthT = clamp((U.halfD - gz) / max(2.0 * U.halfD, 1e-4), 0.0, 1.0);
+  // 0 on the near edge, 1 on the far edge — thins the far rows. gz runs from
+  // +halfD at the far edge down to -halfD at the near one, so it is (gz + halfD)
+  // that grows with distance, not (halfD - gz).
+  let depthT = clamp((gz + U.halfD) / max(2.0 * U.halfD, 1e-4), 0.0, 1.0);
   let depthDim = mix(1.0, U.farDim, depthT);
 
   // Only the two *depth* terms are boosted and clamped. They are a tonal
@@ -276,7 +309,7 @@ fn vs(
   // factor: the screen-edge mask would stop reaching 0 and start showing dots
   // at the window edges, and the reveal front's soft edge would compress to a
   // third of its width and snap dots on.
-  let alpha = core * side * bottomEdge * appear * sizeAlpha;
+  let alpha = core * side * nearEdge * appear * sizeAlpha;
 
   var out : VSOut;
   out.pos = vec4f(ndc + corner * vec2f(rD / U.aspect, rD), 0.0, 1.0);
