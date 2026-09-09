@@ -6,8 +6,16 @@ import shaderSource from "./hero-gradient.wgsl"
 
 import "./hero-gradient.css"
 
-/** Uniform buffer: 32 * f32 = 128 bytes (multiple of 16). */
-const UNIFORM_BYTES = 128
+/** Length of the pointer trail. Must match TRAIL_MAX in the shader. */
+const TRAIL_MAX = 10
+/** Float index where the trail array starts — 40 scalars precede it. */
+const TRAIL_OFFSET = 40
+/**
+ * Uniform buffer: 40 scalar f32 (160 bytes, already a multiple of 16, so the
+ * vec4-aligned trail array needs no padding in front of it) plus TRAIL_MAX
+ * vec4f.
+ */
+const UNIFORM_BYTES = (TRAIL_OFFSET + TRAIL_MAX * 4) * 4
 /**
  * Reveal duration in ms — how long the front takes to sweep from the row
  * closest to the camera back past the furthest one.
@@ -143,6 +151,45 @@ const FAR_DIM = 0.7
 /** Extra brightness on dots riding a crest. 0 makes the wave pure geometry. */
 const CREST_BOOST = 0.9
 /**
+ * Radius of one trail sample's influence, in CSS pixels. Scaled by DPR before
+ * upload, so the wake is the same physical size on every display.
+ */
+const DISTORT_RADIUS_PX = 90
+/** How long a trail sample takes to decay to nothing, in ms. */
+const DISTORT_LIFE_MS = 700
+/**
+ * In-plane displacement at full influence, as a fraction of the lattice
+ * spacing. Above ~0.5 dots are thrown past their neighbours' cells and the
+ * lattice stops being readable as a grid at all.
+ */
+const DISTORT_AMOUNT = 0.2
+/** Off-plane displacement at full influence, as a fraction of lattice spacing. */
+const DISTORT_LIFT = 0.35
+/**
+ * Spatial frequency of the glitch blocks, in cells per world unit. The lattice
+ * spacing is ~0.047 world units, so at 2.2 a block spans roughly nine dots and
+ * they shear together. Raise it for finer confetti, lower it for bigger slabs.
+ */
+const NOISE_SCALE = 2.2
+/** How fast the block pattern drifts, so a held cursor keeps churning. */
+const NOISE_SPEED = 0.35
+/** Colour-channel separation at full influence, in dot radii. */
+const CA_AMOUNT = 1.6
+/** Extra dot radius at full influence, as a fraction. */
+const DOT_GROW = 0.9
+/**
+ * Minimum pointer travel before a new trail sample is recorded, in CSS px. Too
+ * small and all ten samples are spent inside one cursor-width of travel, which
+ * leaves no wake behind a fast swipe.
+ */
+const TRAIL_MIN_PX = 7
+/**
+ * Longest gap between samples while the pointer is moving at all, in ms. Keeps
+ * a slow drag laying down a trail rather than one stationary blob.
+ */
+const TRAIL_MAX_GAP_MS = 60
+
+/**
  * Wave phase used when the visitor prefers reduced motion (frozen frame). The
  * wave is fully formed at every moment, so this only picks which instant of the
  * swell the still is frozen on.
@@ -246,6 +293,19 @@ export function HeroGradient({
       // Set by init() once a frame can be drawn, so the arm timer can force a
       // redraw in the reduced-motion case where no rAF loop is running.
       redraw: null as (() => void) | null,
+      // The band's box in client coordinates, refreshed by syncSize each frame.
+      // Pointer samples are stored in client space and converted here at upload
+      // time, so the move handler never has to touch layout.
+      rectX: 0,
+      rectY: 0,
+      // Ring buffer of recent pointer samples: client x, client y, timestamp.
+      // Newest is at (trailHead - 1 + TRAIL_MAX) % TRAIL_MAX.
+      trail: new Float64Array(TRAIL_MAX * 3),
+      trailHead: 0,
+      trailLen: 0,
+      lastX: 0,
+      lastY: 0,
+      lastAt: 0,
     }
 
     const uniforms = new ArrayBuffer(UNIFORM_BYTES)
@@ -349,6 +409,8 @@ export function HeroGradient({
       // or the grid renders at the wrong resolution.
       const syncSize = (): boolean => {
         const rect = root.getBoundingClientRect()
+        state.rectX = rect.left
+        state.rectY = rect.top
         const w = Math.max(1, Math.round(rect.width))
         const h = Math.max(1, Math.round(rect.height))
         const dpr = Math.min(MAX_DPR, window.devicePixelRatio || 1)
@@ -417,6 +479,38 @@ export function HeroGradient({
         f32[26] = INTENSITY
         f32[27] = CREST_BOOST
         f32[28] = FAR_DIM
+
+        // --- pointer wake ---------------------------------------------------
+        // Samples are walked newest-first and stop at the first expired one:
+        // the ring buffer is chronological, so everything past it is older
+        // still. Client coordinates are converted here, against the rect
+        // syncSize just read, into device pixels from the canvas centre with y
+        // up — the space the shader measures the wake in.
+        const halfW = canvas.width / 2
+        const halfH = canvas.height / 2
+        const lifeMs = DISTORT_LIFE_MS
+        let live = 0
+        for (let n = 0; n < state.trailLen; n++) {
+          const slot = (state.trailHead - 1 - n + TRAIL_MAX * 2) % TRAIL_MAX
+          const src = slot * 3
+          const age = nowMs - state.trail[src + 2]
+          if (age >= lifeMs) break
+          const o = TRAIL_OFFSET + live * 4
+          f32[o] = (state.trail[src] - state.rectX) * state.dpr - halfW
+          f32[o + 1] = halfH - (state.trail[src + 1] - state.rectY) * state.dpr
+          f32[o + 2] = age / 1000
+          f32[o + 3] = 0
+          live++
+        }
+        f32[29] = state.reduced ? 0 : live
+        f32[30] = DISTORT_RADIUS_PX * state.dpr
+        f32[31] = lifeMs / 1000
+        f32[32] = g.spacing * DISTORT_AMOUNT
+        f32[33] = g.spacing * DISTORT_LIFT
+        f32[34] = NOISE_SCALE
+        f32[35] = NOISE_SPEED
+        f32[36] = CA_AMOUNT
+        f32[37] = DOT_GROW
         dev.queue.writeBuffer(uniformBuffer, 0, uniforms)
 
         const encoder = dev.createCommandEncoder()
@@ -495,6 +589,40 @@ export function HeroGradient({
         io.disconnect()
         stopLoop()
       })
+
+      // Pointer samples are recorded on window rather than on the band, which
+      // is pointer-events: none and would never see them. Recording client
+      // coordinates and a timestamp only — no layout reads, no maths — keeps
+      // this cheap on a handler that fires at the display's refresh rate.
+      //
+      // Sampling is rate-limited by distance so ten slots cover a useful span
+      // of travel: without it a fast swipe would spend the whole buffer inside
+      // one cursor-width and leave no wake behind at all.
+      const onPointerMove = (e: PointerEvent) => {
+        if (disposed || state.reduced) return
+        const now = performance.now()
+        const dx = e.clientX - state.lastX
+        const dy = e.clientY - state.lastY
+        const moved = Math.hypot(dx, dy)
+        if (moved < TRAIL_MIN_PX && now - state.lastAt < TRAIL_MAX_GAP_MS) {
+          return
+        }
+        state.lastX = e.clientX
+        state.lastY = e.clientY
+        state.lastAt = now
+        const i = state.trailHead * 3
+        state.trail[i] = e.clientX
+        state.trail[i + 1] = e.clientY
+        state.trail[i + 2] = now
+        state.trailHead = (state.trailHead + 1) % TRAIL_MAX
+        state.trailLen = Math.min(TRAIL_MAX, state.trailLen + 1)
+        // The loop is already running for the wave, so there is nothing to
+        // kick here — the next frame picks the new sample up.
+      }
+      window.addEventListener("pointermove", onPointerMove, { passive: true })
+      registerCleanup(() =>
+        window.removeEventListener("pointermove", onPointerMove)
+      )
 
       const onVisibility = () => {
         if (document.hidden) stopLoop()
