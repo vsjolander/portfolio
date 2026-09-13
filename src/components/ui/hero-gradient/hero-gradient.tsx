@@ -40,7 +40,7 @@ const REVEAL_SOFT = 0.5
  * WebGPU still initialises immediately during the wait — only the entrance is
  * deferred — so the reveal starts on an already-warm device.
  */
-const ENTRANCE_DELAY_MS = 1400
+const ENTRANCE_DELAY_MS = 800
 
 /**
  * Pitch of the plane, in radians. 0 would be a wall facing the camera; pi/2 a
