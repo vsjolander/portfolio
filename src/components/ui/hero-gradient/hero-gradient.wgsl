@@ -28,19 +28,27 @@
 // ramping toward a mid stop is what makes a white dot read as grey, so the far
 // rows just get thinner instead.
 //
-// Moving the pointer over the band drags a wake of distortion through the
-// lattice: dots near the cursor are shoved off their cells along noise-driven
-// directions and their colour channels pull apart into fringes, then the whole
-// thing settles back as the wake ages out. The wake is a short trail of recent
-// pointer samples rather than a single cursor point, so the distortion is left
-// behind and decays rather than teleporting with the mouse.
+// Moving the pointer over the band slides a saucer under the lattice: a squashed
+// disc of fixed world radius rides on the plane at the point the cursor's ray
+// meets it, and the dots it passes under ride up over its hull and splay
+// slightly outward, so the grid drapes over it like fabric. Its cross-section is
+// a superellipse rather than a circle — flat across the middle, falling away
+// near the rim — which is what reads as a disc instead of a ball.
+//
+// The radius is in world units, not pixels, and that is the whole point of it.
+// The disc is one object of one size, so perspective shrinks its footprint with
+// depth on its own: hovering the far rows makes a visibly smaller bulge than
+// hovering the near ones, exactly as a real object under a receding sheet would.
+// A radius in device pixels did the opposite — the far rows are crushed to a
+// sliver, so a fixed screen circle dragged dozens of far cells around while
+// barely touching the near ones.
+//
+// The centre eases toward the cursor rather than snapping to it, so the ball
+// travels with a little inertia and settles rather than teleporting.
 //
 // Geometry is one instanced quad per dot. Everything — grid placement, the
 // wave, the projection, the masks — happens in the vertex shader, so the
 // fragment shader only has to draw an antialiased disc.
-
-// Length of the pointer trail. Must match TRAIL_MAX on the CPU side.
-const TRAIL_MAX : u32 = 10u;
 
 struct Uniforms {
   // Canvas size in device pixels.
@@ -140,37 +148,35 @@ struct Uniforms {
   // to be a colour ramp toward the palette's dark stop.
   farDim : f32,
 
-  // --- pointer wake ------------------------------------------------------
-  // How many entries of `trail` are live this frame.
-  trailCount : f32,
-  // Radius of one trail point's influence, in device pixels.
-  distortRadius : f32,
-  // How long a trail point takes to decay to nothing, in seconds.
-  distortLife : f32,
-  // In-plane displacement at full influence, in world units.
-  distortAmount : f32,
-  // Off-plane displacement at full influence, in world units.
-  distortLift : f32,
-  // Spatial frequency of the glitch blocks, in cells per world unit. Higher is
-  // finer confetti; lower shears the lattice in bigger slabs.
-  noiseScale : f32,
-  // How fast the block pattern drifts, so a held cursor keeps churning instead
-  // of freezing into one static scramble.
-  noiseSpeed : f32,
-  // Colour-channel separation at full influence, in dot radii.
-  caAmount : f32,
-  // Extra dot radius at full influence, as a fraction. 0 keeps dots their size.
-  dotGrow : f32,
-
-  _p0 : f32,
-  _p1 : f32,
-
-  // Recent pointer samples, newest first: xy in device pixels from the centre
-  // of the canvas with y up, z the sample's age in seconds, w unused. Only the
-  // first `trailCount` entries are meaningful. The scalars above come to
-  // exactly 160 bytes, which is already a multiple of 16, so this array needs
-  // no explicit padding in front of it.
-  trail : array<vec4f, TRAIL_MAX>,
+  // --- pointer ball ------------------------------------------------------
+  // Centre of the ball in the plane's OWN 2D coordinates — the same (gx, gz)
+  // the lattice is laid out in, not screen pixels. The screen-to-plane
+  // unprojection depends only on the pointer and the camera, never on which dot
+  // is being shaded, so it is solved once per frame on the CPU and arrives here
+  // already in plane space. That is also what makes it survive a resize: plane
+  // coordinates do not care about the aspect ratio.
+  ballX : f32,
+  ballZ : f32,
+  // Radius of the ball, in WORLD units. A fixed world radius is what makes the
+  // projection shrink the ball's on-screen footprint with depth on its own.
+  ballRadius : f32,
+  // Peak lift at the disc's centre, along the plane normal, in world units.
+  // Equal to ballRadius would be a true hemisphere; well under it is what makes
+  // this a saucer rather than a ball.
+  ballHeight : f32,
+  // Profile exponent of the superellipse cross-section, (1 - dn^e)^(1/e).
+  // 2 is exactly a sphere; higher flattens the top and pulls the falloff out
+  // toward the rim, which is what gives the disc its hull.
+  ballEdge : f32,
+  // Outward in-plane splay scale, in world units.
+  ballSplay : f32,
+  // Fraction of the radius at which the rim feather begins, 0..1. Inside it the
+  // surface is exactly spherical; outside it the skirt is eased away.
+  ballFeather : f32,
+  // Master 0..1 fade. 0 removes the ball entirely, which is what reduced
+  // motion, a pointer that has left the window, a stale pointer and a ray that
+  // misses the plane all resolve to.
+  ballStrength : f32,
 };
 
 @group(0) @binding(0) var<uniform> U : Uniforms;
@@ -192,28 +198,7 @@ struct VSOut {
   // Width of the antialiased rim, in uv units. Derived from the dot's on-screen
   // radius so far (tiny) dots stay soft instead of aliasing into flicker.
   @location(3) edge : f32,
-  // Chromatic aberration offset, in dot radii. Red and blue are sampled either
-  // side of it, so the dot fringes along the direction it was shoved.
-  @location(4) ca : vec2f,
-  // How much the quad was inflated past the dot to make room for `ca`. The
-  // fragment shader multiplies uv by this to get back into dot-radius units.
-  @location(5) grow : f32,
 };
-
-// Hash primitives, from the Dave Hoskins set. Independent per input cell, which
-// is what makes the distortion read as noise rather than as a moire of the
-// lattice itself.
-fn hash21(p : vec2f) -> f32 {
-  var p3 = fract(vec3f(p.x, p.y, p.x) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
-}
-
-fn hash22(p : vec2f) -> vec2f {
-  var p3 = fract(vec3f(p.x, p.y, p.x) * vec3f(0.1031, 0.1030, 0.0973));
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.xx + p3.yz) * p3.zy);
-}
 
 // Perspective projection shared by the two passes below: xy is the clip-space
 // position, z the scale factor that shrinks distant geometry.
@@ -285,55 +270,68 @@ fn vs(
   let centre = vec3f(0.0, U.camY, U.camDist);
   let baseWorld = centre + tangent * gx + bitangent * gz + normal * lift;
 
-  // --- pointer wake ------------------------------------------------------
-  // The dot has to be projected once before it is distorted, because the wake
-  // is measured against where the dot *belongs*. Driving it from the distorted
-  // position instead would feed back on itself: a dot shoved out of the wake
-  // would lose the influence that shoved it and snap home, then be shoved
-  // again, and the whole field would boil.
-  let ndcBase = project(baseWorld).xy;
+  // --- pointer ball ------------------------------------------------------
+  // Measured from the dot's UNDISTORTED cell, for the same reason the old
+  // screen-space wake was: driving the influence from the displaced position
+  // feeds back on itself. A dot that rode up the ball would move out of the
+  // ball's footprint, lose the lift that put it there, drop home, and be lifted
+  // again — the whole field would boil. `gx` and `gz` never move, so the bulge
+  // is stable no matter how far a dot is thrown.
+  //
+  // 2D IN-PLANE distance, deliberately, even though the orthonormal basis makes
+  // the true 3D distance available as length(vec3f(gx - ballX, gz - ballZ,
+  // lift)). sqrt(R^2 - d^2) is by definition the height of the sphere's surface
+  // above the plane at in-plane offset d; feeding it a 3D distance would
+  // describe a smaller sphere, not this one. It would also make the rim
+  // breathe: the wave lift runs to half the ball's radius, so a 3D gate would
+  // shrink the footprint as a crest passed and dots near the rim would flicker
+  // in and out at the wave's frequency.
+  let toBall = vec2f(gx - U.ballX, gz - U.ballZ);
+  let dBall = length(toBall);
+  let dn = min(dBall / max(U.ballRadius, 1e-5), 1.0);
 
-  // Device pixels from the centre of the canvas, y up — the same space the
-  // trail is uploaded in. Measuring here rather than in clip space is what
-  // makes the wake a true circle: the band is about seven times wider than it
-  // is tall, so a radius in clip units would come out as a flat ellipse.
-  let screenPx = ndcBase * U.resolution * 0.5;
+  // Normalised surface height: 1 at the centre, 0 at the rim.
+  //
+  // A superellipse cross-section, (1 - dn^e)^(1/e), rather than a circle. At
+  // e = 2 the two are identical and this is a sphere; raising e flattens the
+  // middle and holds the height out toward the edge before dropping it, which
+  // is the difference between a ball under the sheet and a saucer with a hull.
+  // The exponent is the shape dial and the height is the squash — together they
+  // are what make the lattice drape over a disc rather than a dome.
+  let e = max(U.ballEdge, 1.0);
+  let dome = pow(max(1.0 - pow(dn, e), 0.0), 1.0 / e);
 
-  var influence = 0.0;
-  for (var i = 0u; i < TRAIL_MAX; i = i + 1u) {
-    if (f32(i) >= U.trailCount) {
-      break;
-    }
-    let pt = U.trail[i];
-    // 1 for a sample just laid down, 0 for one at the end of its life. Squared
-    // so a point keeps its grip at first and lets go quickly at the end, rather
-    // than bleeding away linearly.
-    let fresh = clamp(1.0 - pt.z / max(U.distortLife, 1e-3), 0.0, 1.0);
-    let reach = 1.0 - smoothstep(
-      0.0, max(U.distortRadius, 1.0), length(screenPx - pt.xy));
-    influence += fresh * fresh * reach;
-  }
-  // Summed rather than maxed, so lingering in one spot piles samples up and
-  // digs in harder than sweeping past does. The clamp is what stops that
-  // running away.
-  influence = clamp(influence, 0.0, 1.0);
+  // The profile has a vertical tangent at the rim — more so the flatter the
+  // disc — so a dot crossing it takes an abrupt jolt and visibly pops. Fading
+  // the outer shell out with a smoothstep fixes it without rounding the hull
+  // off: inside `ballFeather` the surface is exactly the superellipse, and
+  // across the skirt both value and slope are eased to zero. The min() guards
+  // the degenerate smoothstep(1, 1, x), which WGSL leaves undefined.
+  let rim = 1.0 - smoothstep(min(U.ballFeather, 0.99), 1.0, dn);
+  let grip = rim * U.ballStrength;
 
-  // Direction comes from a *block* hash rather than a per-dot one, so whole
-  // slabs of the lattice shear the same way at once. That is the difference
-  // between a digital glitch and a smooth ripple. The block grid drifts with
-  // time so a held cursor keeps churning instead of freezing into one scramble.
-  let drift = vec2f(U.time * U.noiseSpeed, U.time * U.noiseSpeed * 0.73);
-  let blockRnd = hash22(floor(vec2f(gx, gz) * U.noiseScale + drift));
-  // Per-dot hash on top, so dots inside a block do not move in lockstep.
-  let dotRnd = hash21(vec2f(ix, iz) + 17.0);
+  // Up and over the disc, along the plane's normal. That normal points back
+  // toward the camera, so a positive lift is a hull pushing up *under* the
+  // lattice from the viewer's side, not a dent. This ADDS to the wave lift
+  // already baked into baseWorld, so the disc reads as an object under a sheet
+  // that is itself still swelling.
+  let ballLift = U.ballHeight * dome * grip;
 
-  let angle = blockRnd.x * TAU;
-  let dir = vec2f(cos(angle), sin(angle));
-  let mag = (0.25 + 0.75 * blockRnd.y) * (0.4 + 0.6 * dotRnd) * influence;
+  // A little outward splay, so the lattice reads as stretched over the hull
+  // rather than merely lifted off it. Zero at the centre (there is no direction
+  // there) and zero at the rim; in between it follows dn * dome, which for a
+  // flat profile puts the push out near the edge where the hull is steepest.
+  // ballSplay scales that curve rather than being an exact maximum, since the
+  // curve's peak moves with `ballEdge`. A real inextensible sheet would pull
+  // dots *inward*; outward is the reading we want, and a negative ballSplay
+  // gives the other one.
+  let splayDir = select(vec2f(0.0), toBall / max(dBall, 1e-5), dBall > 1e-5);
+  let splay = splayDir * (U.ballSplay * dn * dome * grip);
 
-  let shove = dir * mag * U.distortAmount;
-  let pop = (dotRnd - 0.5) * 2.0 * mag * U.distortLift;
-  let world = baseWorld + tangent * shove.x + bitangent * shove.y + normal * pop;
+  let world = baseWorld
+    + tangent * splay.x
+    + bitangent * splay.y
+    + normal * ballLift;
 
   // --- projection --------------------------------------------------------
   // Camera sits at the origin looking down +Z.
@@ -342,9 +340,9 @@ fn vs(
   let scale = projected.z;
 
   // Perspective-correct dot size: the same world radius covers fewer pixels
-  // the further away it is, which is what sells the recession. Dots in the
-  // wake also swell a little, which keeps them legible while they are scattered.
-  let rY = U.dotRadius * (1.0 + U.dotGrow * mag) * scale;
+  // the further away it is, which is what sells the recession. The ball moves
+  // dots and nothing else — their size is left alone.
+  let rY = U.dotRadius * scale;
 
   // Radius the dot wants, in device pixels, and the radius it will actually be
   // drawn at.
@@ -430,19 +428,8 @@ fn vs(
   // third of its width and snap dots on.
   let alpha = core * side * nearEdge * appear * sizeAlpha;
 
-  // Chromatic aberration along the direction the dot was shoved, so the fringe
-  // trails the motion instead of pointing somewhere arbitrary. Measured in dot
-  // radii, which keeps the separation proportional as dots shrink into the
-  // distance rather than swamping the far rows.
-  let ca = dir * (U.caAmount * mag);
-  // The offset channels would be clipped by the dot's own quad, so the quad is
-  // inflated to cover them. uv still runs -1..1 across the inflated quad, and
-  // `grow` is what the fragment shader multiplies by to get back into dot-radius
-  // units where the disc has radius 1.
-  let grow = 1.0 + length(ca);
-
   var out : VSOut;
-  out.pos = vec4f(ndc + corner * vec2f(rD * grow / U.aspect, rD * grow), 0.0, 1.0);
+  out.pos = vec4f(ndc + corner * vec2f(rD / U.aspect, rD), 0.0, 1.0);
   out.uv = corner;
   out.colour = colour;
   out.alpha = alpha;
@@ -450,8 +437,6 @@ fn vs(
   // however far away the dot is. A floored dot ends up at edge 1, i.e. a soft
   // blob with no hard rim at all — which is the right look at that size.
   out.edge = clamp(1.0 / drawPx, 0.05, 1.0);
-  out.ca = ca;
-  out.grow = grow;
   return out;
 }
 
@@ -462,21 +447,11 @@ fn disc(q : vec2f, edge : f32) -> f32 {
 
 @fragment
 fn fs(in : VSOut) -> @location(0) vec4f {
-  // Back into dot-radius units, undoing the quad's inflation.
-  let p = in.uv * in.grow;
-
-  // Each channel gets its own disc, offset either side of centre. Where the
-  // three overlap the dot is its normal colour; where they only partly overlap
-  // it splits into fringes. At ca == 0 all three collapse onto the same disc
-  // and this is exactly the old single-mask path.
-  let mask = vec3f(
-    disc(p - in.ca, in.edge),
-    disc(p, in.edge),
-    disc(p + in.ca, in.edge));
-
-  // Premultiplied, with each channel carrying its own coverage. Alpha takes the
-  // widest of the three so no channel is ever brighter than the alpha it is
-  // premultiplied against — which would read as a halo rather than a fringe.
-  let a = in.alpha * max(max(mask.r, mask.g), mask.b);
-  return vec4f(in.colour * in.alpha * mask, a);
+  // One disc, carved straight out of the quad's -1..1 uv. The quad is no longer
+  // inflated past the dot, so uv is already in dot-radius units.
+  let a = in.alpha * disc(in.uv, in.edge);
+  // Premultiplied: the context is configured alphaMode "premultiplied" and the
+  // blend is (one, one-minus-src-alpha), so rgb must already carry its own
+  // coverage.
+  return vec4f(in.colour * a, a);
 }

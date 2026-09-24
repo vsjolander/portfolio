@@ -6,16 +6,19 @@ import shaderSource from "./hero-gradient.wgsl"
 
 import "./hero-gradient.css"
 
-/** Length of the pointer trail. Must match TRAIL_MAX in the shader. */
-const TRAIL_MAX = 10
-/** Float index where the trail array starts — 40 scalars precede it. */
-const TRAIL_OFFSET = 40
 /**
- * Uniform buffer: 40 scalar f32 (160 bytes, already a multiple of 16, so the
- * vec4-aligned trail array needs no padding in front of it) plus TRAIL_MAX
- * vec4f.
+ * Uniform buffer: 37 contiguous f32 of payload, so the byte offset of field `i`
+ * is exactly `i * 4` and the whole struct writes as one flat Float32Array with
+ * no interior padding.
+ *
+ * Allocated at 40 floats (160 bytes) rather than the 38 the struct strictly
+ * needs. The leading vec2f gives the struct an 8-byte alignment, so WGSL rounds
+ * its size to 152 — Dawn reports exactly that as the minimum binding size — but
+ * an implementation that rounds a uniform struct up to 16 instead would want
+ * 160. Binding more than the minimum is always valid, so 160 satisfies both and
+ * the trailing floats are simply never written.
  */
-const UNIFORM_BYTES = (TRAIL_OFFSET + TRAIL_MAX * 4) * 4
+const UNIFORM_BYTES = 40 * 4
 /**
  * Reveal duration in ms — how long the front takes to sweep from the row
  * closest to the camera back past the furthest one.
@@ -55,7 +58,7 @@ const TILT = 1.36
  */
 const CAM_DIST = 2
 /** Number of dot rows from the near edge to the far edge. Sets the density. */
-const ROWS = 50
+const ROWS = 90
 /**
  * How far the lattice extends past the edges of the band. The projection is
  * solved so the plane's +-1 depth edges land exactly on the top and bottom of
@@ -151,43 +154,85 @@ const FAR_DIM = 0.7
 /** Extra brightness on dots riding a crest. 0 makes the wave pure geometry. */
 const CREST_BOOST = 0.9
 /**
- * Radius of one trail sample's influence, in CSS pixels. Scaled by DPR before
- * upload, so the wake is the same physical size on every display.
+ * Radius of the pointer ball, as a multiple of the lattice spacing.
+ *
+ * World units, and that is the entire point of it. A radius in device pixels
+ * made the ball the same size everywhere on screen, which meant it dragged
+ * around two cells' worth of near rows and six cells' worth of far ones — the
+ * opposite of what a real object under the sheet would do.
+ *
+ * The spacing is ~0.047 world units, so 1.7 is a disc a little under three and
+ * a half cells across. Projection scale runs from 9.35 at the top of the band
+ * (plane depth -1) to 3.21 at the bottom (depth +1), so on the current 200px
+ * band its on-screen radius runs from ~75 css px near to ~26 far — the far end
+ * is a third of the near one, which is the visible depth cue being bought. Much
+ * under 1.2 and there are too few dots inside to read as a disc at the far end;
+ * much over 2.5 and the near-edge disc swallows the band.
  */
-const DISTORT_RADIUS_PX = 90
-/** How long a trail sample takes to decay to nothing, in ms. */
-const DISTORT_LIFE_MS = 700
+const BALL_RADIUS = 1.7
 /**
- * In-plane displacement at full influence, as a fraction of the lattice
- * spacing. Above ~0.5 dots are thrown past their neighbours' cells and the
- * lattice stops being readable as a grid at all.
+ * Peak lift at the disc's centre, as a fraction of BALL_RADIUS. 1 would be a
+ * true hemisphere; this is what squashes it into a saucer without touching its
+ * footprint.
+ *
+ * At 0.45 the hull stands ~17 css px off the plane at the middle of the band,
+ * against a ~75 css px radius — a little under a 1:4 height-to-width ratio,
+ * which is about where a shape stops reading as a dome and starts reading as a
+ * disc. For scale, the radial wave itself swings dots ~24 css px, so the disc
+ * sits just below the swell it is riding on.
  */
-const DISTORT_AMOUNT = 0.2
-/** Off-plane displacement at full influence, as a fraction of lattice spacing. */
-const DISTORT_LIFT = 0.35
+const BALL_HEIGHT = 0.45
 /**
- * Spatial frequency of the glitch blocks, in cells per world unit. The lattice
- * spacing is ~0.047 world units, so at 2.2 a block spans roughly nine dots and
- * they shear together. Raise it for finer confetti, lower it for bigger slabs.
+ * Profile exponent of the disc's cross-section, (1 - dn^e)^(1/e).
+ *
+ * 2 is exactly a circle, so the shape collapses back to the sphere this started
+ * as. Raising it flattens the middle and holds the height out toward the rim
+ * before dropping it — 4 gives a saucer with a definite hull; past ~8 the sides
+ * go vertical and it reads as a cylinder punched through the lattice.
  */
-const NOISE_SCALE = 2.2
-/** How fast the block pattern drifts, so a held cursor keeps churning. */
-const NOISE_SPEED = 0.35
-/** Colour-channel separation at full influence, in dot radii. */
-const CA_AMOUNT = 1.6
-/** Extra dot radius at full influence, as a fraction. */
-const DOT_GROW = 0.9
+const BALL_EDGE = 4
 /**
- * Minimum pointer travel before a new trail sample is recorded, in CSS px. Too
- * small and all ten samples are spent inside one cursor-width of travel, which
- * leaves no wake behind a fast swipe.
+ * Outward in-plane splay, as a fraction of the lattice spacing. A scale on the
+ * dn * dome curve rather than an exact maximum, since that curve's peak moves
+ * with BALL_EDGE — at the default profile the real peak is ~0.7 of this. Above
+ * ~0.7 dots are pushed past their neighbours' cells and the lattice stops
+ * reading as a grid. Negative splays inward, which is what an inextensible
+ * sheet would actually do.
  */
-const TRAIL_MIN_PX = 7
+const BALL_SPLAY = 0.3
 /**
- * Longest gap between samples while the pointer is moving at all, in ms. Keeps
- * a slow drag laying down a trail rather than one stationary blob.
+ * Fraction of the radius at which the rim feather begins, 0..1. Inside it the
+ * lattice sits on the exact superellipse; outside it the skirt is eased away,
+ * because the profile has a vertical tangent at the rim — more so the flatter
+ * the disc — and dots crossing it would pop. Below ~0.5 the hull softens into a
+ * blob; above ~0.9 the pop comes back.
  */
-const TRAIL_MAX_GAP_MS = 60
+const BALL_FEATHER = 0.7
+/**
+ * Time constant of the ball's chase, in ms — the centre closes 63% of the gap to
+ * the cursor's hit point in this long. Frame-rate independent (see `ease`), so
+ * it is the same weight at 60 and at 144Hz. 0 would nail the ball to the cursor;
+ * this is what makes it visibly *travel*.
+ */
+const BALL_EASE_MS = 90
+/** Fade-in of the ball's strength once the pointer arrives, in ms. */
+const BALL_FADE_IN_MS = 120
+/** Fade-out when the pointer leaves, goes stale, or the ray misses, in ms. */
+const BALL_FADE_OUT_MS = 300
+/**
+ * How long a motionless pointer keeps its ball before it melts away, in ms. The
+ * pointer only reports while it moves, so a cursor parked over the band is
+ * indistinguishable from one that left the window past whatever leave events
+ * happen to fire; without this backstop the bulge would be a permanent dent.
+ */
+const BALL_HOLD_MS = 1800
+/**
+ * How far past the edge of the lattice the ball fades out over, as a multiple of
+ * the lattice spacing. The pointer is tracked on the window, not on the 200px
+ * band, so it spends most of its life well outside the grid; this is what stops
+ * a ball parked off the near edge from shearing the outermost row forever.
+ */
+const BALL_REACH = 4
 
 /**
  * Wave phase used when the visitor prefers reduced motion (frozen frame). The
@@ -242,12 +287,73 @@ function geometry(aspect: number) {
     focal,
     camY,
     halfD,
+    halfW,
     spacing,
     cols,
     instances: cols * ROWS,
     revealFrom: depthScreen(-halfD),
     revealTo: depthScreen(halfD),
   }
+}
+
+/**
+ * Where the ray through a screen point meets the dot plane, in the plane's own
+ * (gx, gz) coordinates — the exact space the vertex shader lays the lattice out
+ * in. Null when the ray misses.
+ *
+ * This depends only on the pointer and the camera, never on which dot is being
+ * shaded, so it is solved once here rather than thousands of times in the vertex
+ * shader. It is the algebraic inverse of the shader's `project()`: the camera is
+ * at the origin looking down +Z, so the ray through `ndc` is
+ *   P(t) = t * (ndc.x * aspect / focal, ndc.y / focal, 1),  t = view-space z
+ * and intersecting it with dot(P - centre, normal) = 0 for the plane's centre
+ * (0, camY, camDist) and normal (0, -sin t, -cos t) gives
+ *   t = (camY * st + camDist * ct) / (d.y * st + ct).
+ * The numerator is the perpendicular distance from the camera to the plane,
+ * 0.3184 at the current tilt — a handy invariant if TILT is ever retuned.
+ *
+ * The denominator vanishes at the horizon, which sits at
+ * ndc.y = -focal * ct / st = -2.045: a full band-height below the bottom of the
+ * band, so anywhere over the band itself it stays between 0.107 and 0.312 and is
+ * never close to zero. It matters anyway, because the pointer is tracked on the
+ * window and can be a long way below the band: past the horizon the denominator
+ * goes negative and the ray never meets the plane in front of the camera at all,
+ * and just short of it `t` explodes (69 at ndc.y -2, 590 at -2.04). Both are
+ * rejected here rather than clamped — clamping would pin the ball to the
+ * horizon, where it would sit in the far rows shearing them forever.
+ */
+function planeHit(
+  ndcX: number,
+  ndcY: number,
+  aspect: number,
+  g: ReturnType<typeof geometry>
+): { gx: number; gz: number } | null {
+  const ct = Math.cos(TILT)
+  const st = Math.sin(TILT)
+  const dy = ndcY / g.focal
+  const denom = dy * st + ct
+  if (denom <= 1e-3) return null
+  const t = (g.camY * st + CAM_DIST * ct) / denom
+  // A hit this far down the plane is past the horizon in all but name.
+  if (!(t > 0) || t > CAM_DIST * 4) return null
+  const px = ((ndcX * aspect) / g.focal) * t
+  const py = dy * t
+  return { gx: px, gz: (py - g.camY) * -ct + (t - CAM_DIST) * st }
+}
+
+/**
+ * Exponential smoothing that does not change weight with frame rate: the gap
+ * closes by the same *fraction per millisecond* whether the display runs at 60
+ * or 144Hz. A plain `cur += (target - cur) * k` would make the ball twice as
+ * eager on a 120Hz display.
+ */
+function ease(
+  cur: number,
+  target: number,
+  tauMs: number,
+  dtMs: number
+): number {
+  return cur + (target - cur) * (1 - Math.exp(-dtMs / Math.max(tauMs, 1e-3)))
 }
 
 /**
@@ -298,14 +404,27 @@ export function HeroGradient({
       // time, so the move handler never has to touch layout.
       rectX: 0,
       rectY: 0,
-      // Ring buffer of recent pointer samples: client x, client y, timestamp.
-      // Newest is at (trailHead - 1 + TRAIL_MAX) % TRAIL_MAX.
-      trail: new Float64Array(TRAIL_MAX * 3),
-      trailHead: 0,
-      trailLen: 0,
-      lastX: 0,
-      lastY: 0,
-      lastAt: 0,
+      // Latest pointer position in client coordinates, plus when it was seen.
+      // Converted to plane coordinates once per frame in render(), against the
+      // rect syncSize just read — the move handler never touches layout.
+      pointerX: 0,
+      pointerY: 0,
+      pointerAt: 0,
+      // False before the first move, and again once the pointer leaves the
+      // document or the window loses focus.
+      pointerLive: false,
+      // The ball's eased centre, in the plane's own coordinates. Plane space,
+      // not screen space, so a resize does not teleport it.
+      ballX: 0,
+      ballZ: 0,
+      // False until the ball has ever been placed, so the first hit snaps rather
+      // than flying in from (0, 0).
+      ballPlaced: false,
+      ballStrength: 0,
+      // Timestamp of the previous rendered frame, for frame-rate independent
+      // easing. Zeroed when the loop stops, so resuming from a backgrounded tab
+      // does not integrate a multi-second step.
+      lastFrame: 0,
     }
 
     const uniforms = new ArrayBuffer(UNIFORM_BYTES)
@@ -480,37 +599,75 @@ export function HeroGradient({
         f32[27] = CREST_BOOST
         f32[28] = FAR_DIM
 
-        // --- pointer wake ---------------------------------------------------
-        // Samples are walked newest-first and stop at the first expired one:
-        // the ring buffer is chronological, so everything past it is older
-        // still. Client coordinates are converted here, against the rect
-        // syncSize just read, into device pixels from the canvas centre with y
-        // up — the space the shader measures the wake in.
-        const halfW = canvas.width / 2
-        const halfH = canvas.height / 2
-        const lifeMs = DISTORT_LIFE_MS
-        let live = 0
-        for (let n = 0; n < state.trailLen; n++) {
-          const slot = (state.trailHead - 1 - n + TRAIL_MAX * 2) % TRAIL_MAX
-          const src = slot * 3
-          const age = nowMs - state.trail[src + 2]
-          if (age >= lifeMs) break
-          const o = TRAIL_OFFSET + live * 4
-          f32[o] = (state.trail[src] - state.rectX) * state.dpr - halfW
-          f32[o + 1] = halfH - (state.trail[src + 1] - state.rectY) * state.dpr
-          f32[o + 2] = age / 1000
-          f32[o + 3] = 0
-          live++
+        // --- pointer ball ---------------------------------------------------
+        // dt is clamped: a tab that was backgrounded, or a dropped frame under
+        // load, must not let the ball take one enormous step. On the first frame
+        // after the loop restarts lastFrame is 0 and dt is 0, so nothing moves
+        // until there is a real interval to move over.
+        const dt = state.lastFrame ? Math.min(100, nowMs - state.lastFrame) : 0
+        state.lastFrame = nowMs
+
+        // The pointer only reports while it moves, so a cursor parked over the
+        // band is indistinguishable from one that left; BALL_HOLD_MS is the
+        // backstop that keeps the bulge from becoming a permanent dent.
+        let target: { gx: number; gz: number } | null = null
+        if (
+          !state.reduced &&
+          state.pointerLive &&
+          nowMs - state.pointerAt < BALL_HOLD_MS
+        ) {
+          const halfCW = canvas.width / 2
+          const halfCH = canvas.height / 2
+          const ndcX =
+            ((state.pointerX - state.rectX) * state.dpr - halfCW) / halfCW
+          const ndcY =
+            (halfCH - (state.pointerY - state.rectY) * state.dpr) / halfCH
+          target = planeHit(ndcX, ndcY, aspect, g)
         }
-        f32[29] = state.reduced ? 0 : live
-        f32[30] = DISTORT_RADIUS_PX * state.dpr
-        f32[31] = lifeMs / 1000
-        f32[32] = g.spacing * DISTORT_AMOUNT
-        f32[33] = g.spacing * DISTORT_LIFT
-        f32[34] = NOISE_SCALE
-        f32[35] = NOISE_SPEED
-        f32[36] = CA_AMOUNT
-        f32[37] = DOT_GROW
+
+        // How much of the ball survives running off the edge of the lattice. The
+        // pointer lives on the window, not on the 200px band, so the hit point
+        // spends most of its time outside the grid: above the band the ray
+        // strikes the plane past its near edge, below it the hit races off
+        // toward the horizon. Fading over the last few cells means the ball
+        // rolls off the edge instead of vanishing at it.
+        const margin = g.spacing * BALL_REACH
+        const reach = (v: number, limit: number) =>
+          Math.max(0, Math.min(1, (limit + margin - Math.abs(v)) / margin))
+
+        let want = 0
+        if (target) {
+          want = reach(target.gz, g.halfD) * reach(target.gx, g.halfW)
+          // Snap rather than ease when the ball is effectively absent, so it
+          // fades up where the cursor is instead of streaking across the band
+          // from wherever it was last parked.
+          if (state.ballStrength < 0.01 || !state.ballPlaced) {
+            state.ballX = target.gx
+            state.ballZ = target.gz
+            state.ballPlaced = true
+          } else {
+            state.ballX = ease(state.ballX, target.gx, BALL_EASE_MS, dt)
+            state.ballZ = ease(state.ballZ, target.gz, BALL_EASE_MS, dt)
+          }
+        }
+        // On a miss the centre is held where it was and only the strength
+        // decays, so the ball sinks back into the plane in place.
+        state.ballStrength = ease(
+          state.ballStrength,
+          want,
+          want > state.ballStrength ? BALL_FADE_IN_MS : BALL_FADE_OUT_MS,
+          dt
+        )
+
+        const ballR = g.spacing * BALL_RADIUS
+        f32[29] = state.ballX
+        f32[30] = state.ballZ
+        f32[31] = ballR
+        f32[32] = ballR * BALL_HEIGHT
+        f32[33] = BALL_EDGE
+        f32[34] = g.spacing * BALL_SPLAY
+        f32[35] = BALL_FEATHER
+        f32[36] = state.reduced ? 0 : state.ballStrength
         dev.queue.writeBuffer(uniformBuffer, 0, uniforms)
 
         const encoder = dev.createCommandEncoder()
@@ -562,6 +719,9 @@ export function HeroGradient({
       const stopLoop = () => {
         if (frame) cancelAnimationFrame(frame)
         frame = 0
+        // So a resumed loop eases from a clean clock rather than integrating the
+        // whole time the band spent scrolled away in one step.
+        state.lastFrame = 0
       }
 
       // Under reduced motion there is no frame loop running, so a resize has to
@@ -590,39 +750,43 @@ export function HeroGradient({
         stopLoop()
       })
 
-      // Pointer samples are recorded on window rather than on the band, which
-      // is pointer-events: none and would never see them. Recording client
-      // coordinates and a timestamp only — no layout reads, no maths — keeps
-      // this cheap on a handler that fires at the display's refresh rate.
-      //
-      // Sampling is rate-limited by distance so ten slots cover a useful span
-      // of travel: without it a fast swipe would spend the whole buffer inside
-      // one cursor-width and leave no wake behind at all.
+      // The pointer is tracked on window rather than on the band, which is
+      // pointer-events: none and would never see it. Storing client coordinates
+      // and a timestamp only — no layout reads, no maths, no ray — keeps this
+      // cheap on a handler that fires at the display's refresh rate; the
+      // unprojection happens once per frame in render() instead.
       const onPointerMove = (e: PointerEvent) => {
         if (disposed || state.reduced) return
-        const now = performance.now()
-        const dx = e.clientX - state.lastX
-        const dy = e.clientY - state.lastY
-        const moved = Math.hypot(dx, dy)
-        if (moved < TRAIL_MIN_PX && now - state.lastAt < TRAIL_MAX_GAP_MS) {
-          return
-        }
-        state.lastX = e.clientX
-        state.lastY = e.clientY
-        state.lastAt = now
-        const i = state.trailHead * 3
-        state.trail[i] = e.clientX
-        state.trail[i + 1] = e.clientY
-        state.trail[i + 2] = now
-        state.trailHead = (state.trailHead + 1) % TRAIL_MAX
-        state.trailLen = Math.min(TRAIL_MAX, state.trailLen + 1)
+        state.pointerX = e.clientX
+        state.pointerY = e.clientY
+        state.pointerAt = performance.now()
+        state.pointerLive = true
         // The loop is already running for the wave, so there is nothing to
-        // kick here — the next frame picks the new sample up.
+        // kick here — the next frame picks the new position up.
       }
       window.addEventListener("pointermove", onPointerMove, { passive: true })
       registerCleanup(() =>
         window.removeEventListener("pointermove", onPointerMove)
       )
+
+      // The band is pointer-events: none and the pointer is tracked on the
+      // window, so there is no element to get a leave event from. `pointerout`
+      // with a null relatedTarget is the document-level "the cursor left the
+      // window" signal; blur covers alt-tabbing away mid-hover, where no pointer
+      // event fires at all. Either way the ball fades out rather than freezing.
+      const onPointerGone = (e: PointerEvent) => {
+        if (e.relatedTarget === null) state.pointerLive = false
+      }
+      document.addEventListener("pointerout", onPointerGone)
+      registerCleanup(() =>
+        document.removeEventListener("pointerout", onPointerGone)
+      )
+
+      const onBlur = () => {
+        state.pointerLive = false
+      }
+      window.addEventListener("blur", onBlur)
+      registerCleanup(() => window.removeEventListener("blur", onBlur))
 
       const onVisibility = () => {
         if (document.hidden) stopLoop()
@@ -647,6 +811,12 @@ export function HeroGradient({
 
       const onMotionChange = (e: MediaQueryListEvent) => {
         state.reduced = e.matches
+        // The reduced path draws one frame and stops, so an eased fade-out would
+        // never get frames to run on — drop the ball outright instead.
+        if (state.reduced) {
+          state.ballStrength = 0
+          state.pointerLive = false
+        }
         stopLoop()
         startLoop()
       }
